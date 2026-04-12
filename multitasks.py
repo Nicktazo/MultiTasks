@@ -9,8 +9,7 @@ import sys
 from core.config import load_config, ConfigError
 from core.dag import get_execution_order
 from core.runner import capture_git_snapshot
-from core.scheduler import run_pipeline, resolve_project_scope
-from core.state import RunState, FAILED, build_resume_state
+from core.state import RunState, FAILED
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -50,22 +49,16 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 def cmd_run(args: argparse.Namespace) -> int:
     """Run the pipeline."""
-    try:
-        config = load_config(args.config)
-    except ConfigError as e:
-        print(f"Config error:\n{e}", file=sys.stderr)
-        return 1
+    from core.run_api import execute_run
 
-    scope = None
     if args.project:
-        try:
-            scope = resolve_project_scope(config, args.project)
-        except ValueError as e:
-            print(f"Error: {e}", file=sys.stderr)
-            return 1
-        print(f"Scope: {args.project} + upstream dependencies ({len(scope)} tasks)")
+        print(f"Scope: {args.project} + upstream dependencies")
 
-    state = run_pipeline(config, scope=scope)
+    try:
+        state = execute_run(args.config, project=args.project)
+    except (ConfigError, ValueError) as e:
+        print(f"Error:\n{e}", file=sys.stderr)
+        return 1
 
     failed = [t for t in state.tasks.values() if t.status == FAILED]
     return 1 if failed else 0
@@ -91,29 +84,13 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 def cmd_retry(args: argparse.Namespace) -> int:
     """Retry from the latest run, inheriting only done tasks."""
+    from core.run_api import execute_retry
+
     try:
-        config = load_config(args.config)
-    except ConfigError as e:
-        print(f"Config error:\n{e}", file=sys.stderr)
+        state = execute_retry(args.config)
+    except (ConfigError, RuntimeError) as e:
+        print(f"Error:\n{e}", file=sys.stderr)
         return 1
-
-    old_state = RunState.latest(config.settings.state_dir)
-    if old_state is None:
-        print("No previous run found. Use 'run' instead.", file=sys.stderr)
-        return 1
-
-    print(f"Retrying from: {old_state.run_id}")
-    old_done = old_state.done_task_ids()
-    print(f"Inheriting {len(old_done)} done task(s)")
-
-    # Build task list from current config
-    all_order = get_execution_order(config)
-
-    new_state, inherited_done = build_resume_state(
-        old_state, all_order, config.settings.state_dir, config=config,
-    )
-
-    state = run_pipeline(config, state=new_state, inherited_done=inherited_done)
 
     failed = [t for t in state.tasks.values() if t.status == FAILED]
     return 1 if failed else 0

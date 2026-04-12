@@ -154,12 +154,16 @@ The dashboard is served at `http://127.0.0.1:<port>` (default port: 18300).
 Two tabs:
 
 **Runs tab**: run metadata, per-task status/duration/errors, run selector
-dropdown for historical runs.
+dropdown for historical runs. **Run All** and **Retry Latest** buttons launch
+pipelines directly from the browser — status updates via 3-second polling.
 
 **Config tab**: add/edit/delete projects and tasks, update settings, validate
 the configuration — all from the browser. CLI YAML editing still works
 alongside; the Config tab reads from disk on every load.
 
+- **Run All / Retry Latest**: trigger a full pipeline run or retry from the
+  latest state. Buttons are disabled while a run is in progress. A status bar
+  shows idle/running/done/failed with timestamps.
 - **Add Project**: combined form — project name, path, and first task submitted
   as a single operation (every project must have at least one task).
 - **Add/Edit Task**: inline forms for prompt, tool, depends_on, review_of.
@@ -171,8 +175,7 @@ alongside; the Config tab reads from disk on every load.
   removes any YAML comments.** Hand-edited comments will be lost.
 
 **Limitations**:
-- No ability to trigger runs or retry from the dashboard
-- No live refresh — manually reload the browser to see updated state
+- No project-scoped runs from the dashboard (Run All runs everything)
 - Localhost only — binds to 127.0.0.1, not accessible from other machines
 - `--run-id` sets the initially selected run; the dropdown still lets you
   switch to others
@@ -189,13 +192,15 @@ core/
   runner.py            CLI wrappers (claude/codex/codex-review), git snapshot, log writing
   state.py             RunState + TaskState: thread-safe state machine, atomic JSON persistence
   notify.py            WhatsApp/Telegram notifications via openclaw
-  dashboard.py         HTTP dashboard server (read-only + config editor endpoints)
+  run_api.py           Reusable execute_run/execute_retry + PipelineRunner for dashboard
+  dashboard.py         HTTP dashboard server (config editor + triggered runs)
 templates/
-  dashboard.html       Single-page dashboard frontend (runs + config tabs)
+  dashboard.html       Single-page dashboard frontend (runs + config + run controls)
 tests/
   test_scheduler.py    Scheduler + config + DAG + runner integration tests
   test_retry.py        Retry / resume state tests
   test_dashboard.py    Dashboard HTTP endpoint tests (read-only + POST)
   test_config_writer.py Config writer round-trip, mutation, validation tests
   test_notify.py       Notification sanitization tests
+  test_run_api.py      Run API: execute_run, execute_retry, PipelineRunner tests
 ```

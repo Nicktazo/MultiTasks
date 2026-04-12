@@ -126,6 +126,18 @@
                     padding: 10px 16px; margin: 12px 24px; border-radius: 6px; font-size: 13px; }
 
   .actions-section { padding: 0 24px 24px; }
+
+  .run-controls { display: flex; align-items: center; gap: 10px; padding: 12px 24px;
+                  background: #fff; border-bottom: 1px solid #eee; }
+  .run-controls .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .run-status-bar { margin-left: auto; font-size: 13px; font-weight: 500; color: #888; }
+  .run-status-bar .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+                         margin-right: 6px; vertical-align: middle; }
+  .run-status-bar .dot-idle { background: #bdc3c7; }
+  .run-status-bar .dot-running { background: #3498db; animation: pulse 1.2s infinite; }
+  .run-status-bar .dot-done { background: #27ae60; }
+  .run-status-bar .dot-failed { background: #e74c3c; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 </style>
 </head>
 <body>
@@ -197,9 +209,113 @@
   }
 
   /* ====== RUNS TAB ====== */
+  var pollTimer = null;
+  var runsBanner = null;
+
+  function startPolling(container) {
+    stopPolling();
+    pollTimer = setInterval(function() {
+      fetch('/api/run-status').then(function(r) { return r.json(); }).then(function(st) {
+        updateStatusBar(st);
+        if (st.status === 'running') {
+          loadRunsContent(container);
+        } else {
+          stopPolling();
+          loadRunsContent(container);
+        }
+      });
+    }, 3000);
+  }
+
+  function stopPolling() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }
+
+  function updateStatusBar(st) {
+    var bar = document.getElementById('run-status-bar');
+    if (!bar) return;
+    clearEl(bar);
+    var dot = el('span', {className: 'dot dot-' + st.status});
+    var text = st.status.charAt(0).toUpperCase() + st.status.slice(1);
+    if (st.status === 'running' && st.started_at) {
+      var t = st.started_at.split('T')[1];
+      if (t) text += ' (' + st.mode + ') since ' + t.substring(0, 8);
+    }
+    if (st.status === 'done' && st.run_id) {
+      text += ' — ' + st.run_id;
+    }
+    if (st.status === 'failed' && st.error) {
+      text += ' — ' + st.error.substring(0, 80);
+    }
+    bar.appendChild(dot);
+    bar.appendChild(document.createTextNode(text));
+
+    // Toggle buttons
+    var btns = document.querySelectorAll('.run-controls .btn');
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].disabled = (st.status === 'running');
+    }
+  }
+
+  function triggerRun(mode, container) {
+    fetch('/api/run', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({mode: mode})
+    }).then(function(r) { return r.json(); }).then(function(res) {
+      if (res.ok) {
+        updateStatusBar(res);
+        startPolling(container);
+      } else {
+        showRunsBanner((res.errors || ['Unknown error']).join('; '), true);
+      }
+    }).catch(function(err) {
+      showRunsBanner(String(err), true);
+    });
+  }
+
+  function showRunsBanner(msg, isError) {
+    if (!runsBanner) return;
+    clearEl(runsBanner);
+    var cls = isError ? 'error-banner' : 'success-banner';
+    runsBanner.appendChild(el('div', {className: cls, style: 'margin:0', textContent: msg}));
+    setTimeout(function() { if (runsBanner) clearEl(runsBanner); }, 6000);
+  }
+
   function loadRunsTab(container, runId) {
     clearEl(container);
-    container.appendChild(el('div', {className: 'empty', textContent: 'Loading runs...'}));
+
+    // Content area (created first so closures can reference it)
+    var content = el('div', {id: 'runs-content'});
+
+    // Run controls bar
+    var controls = el('div', {className: 'run-controls'}, [
+      el('button', {className: 'btn btn-primary', textContent: 'Run All',
+        onclick: function() { triggerRun('run', content); }}),
+      el('button', {className: 'btn btn-secondary', textContent: 'Retry Latest',
+        onclick: function() { triggerRun('retry', content); }}),
+      el('div', {className: 'run-status-bar', id: 'run-status-bar'}, [
+        el('span', {className: 'dot dot-idle'}),
+        document.createTextNode('Idle')
+      ])
+    ]);
+    container.appendChild(controls);
+
+    // Banner area for errors
+    runsBanner = el('div', {id: 'runs-banner'});
+    container.appendChild(runsBanner);
+
+    container.appendChild(content);
+    loadRunsContent(content, runId);
+
+    // Check current run status and start polling if needed
+    fetch('/api/run-status').then(function(r) { return r.json(); }).then(function(st) {
+      updateStatusBar(st);
+      if (st.status === 'running') startPolling(content);
+    });
+  }
+
+  function loadRunsContent(container, runId) {
     var url = '/api/state';
     if (runId) url += '?run_id=' + encodeURIComponent(runId);
     fetch(url).then(function(r) { return r.json(); }).then(function(data) {
@@ -234,7 +350,7 @@
 
     /* Run selector + meta */
     var selectEl = el('select', {id: 'run-select', onchange: function() {
-      loadRunsTab(container, this.value);
+      loadRunsContent(container, this.value);
     }}, (runs || []).map(function(r) {
       var opt = el('option', {value: r, textContent: r});
       if (r === data.run_id) opt.selected = true;
@@ -543,7 +659,7 @@
         }
       }),
       el('button', {className: 'btn btn-secondary btn-sm', textContent: 'Cancel',
-        onclick: function() { replaceEl.parentNode.replaceChild(renderTaskCard(projName, task, tabContainer), form); }
+        onclick: function() { form.parentNode.replaceChild(renderTaskCard(projName, task, tabContainer), form); }
       })
     ]));
 

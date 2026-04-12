@@ -31,6 +31,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
     template_path: str = ""
     initial_run_id: str = ""
     config_path: str = "projects.yaml"
+    runner = None  # PipelineRunner, injected via type()
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
@@ -46,6 +47,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             self._serve_runs()
         elif path == "/api/config":
             self._serve_config()
+        elif path == "/api/run-status":
+            self._send_json(200, self.runner.get_status())
         else:
             self._send_json(404, {"error": f"Not found: {self.path}"})
 
@@ -88,6 +91,10 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             self._handle_validate()
             return
 
+        if path == "/api/run":
+            self._handle_run(body)
+            return
+
         if path not in dispatch:
             self._send_json(404, {"ok": False, "config": None, "order": [], "errors": [f"Not found: {path}"]})
             return
@@ -101,6 +108,22 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             self._send_json(200, {"ok": True, "config": result["config"], "order": order, "errors": []})
         else:
             self._send_json(400, {"ok": False, "config": None, "order": [], "errors": result["errors"]})
+
+    def _handle_run(self, body: dict) -> None:
+        mode = body.get("mode")
+        if not mode:
+            self._send_json(400, {"ok": False, "errors": ["Missing 'mode' field"]})
+            return
+        if mode not in ("run", "retry"):
+            self._send_json(400, {"ok": False, "errors": [f"Invalid mode: {mode!r}. Must be 'run' or 'retry'."]})
+            return
+        project = body.get("project") or None
+        result = self.runner.start(self.config_path, mode, project)
+        if result.get("ok"):
+            self._send_json(202, result)
+        else:
+            # Only reachable when pipeline is already running
+            self._send_json(409, result)
 
     def _handle_validate(self) -> None:
         try:
@@ -215,15 +238,19 @@ def start_dashboard(port: int, state_dir: str = "state",
     Returns True if the server ran successfully, False on startup error.
     """
     import sys
+    from .run_api import PipelineRunner
 
     template_dir = os.path.join(os.path.dirname(__file__), os.pardir, "templates")
     template_path = os.path.normpath(os.path.join(template_dir, "dashboard.html"))
+
+    runner = PipelineRunner()
 
     handler = type(
         "_Handler",
         (_DashboardHandler,),
         {"state_dir": state_dir, "template_path": template_path,
-         "initial_run_id": run_id or "", "config_path": config_path},
+         "initial_run_id": run_id or "", "config_path": config_path,
+         "runner": runner},
     )
 
     try:
