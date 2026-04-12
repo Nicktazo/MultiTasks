@@ -1,0 +1,6 @@
+state/
+logs/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.yaml.tmp

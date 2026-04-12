@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MultiTasks Dashboard</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         background: #f5f5f5; color: #333; line-height: 1.5; }
+
+  .header { background: #1a1a2e; color: #fff; padding: 16px 24px; display: flex;
+             align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+  .header h1 { font-size: 18px; font-weight: 600; }
+  .header .meta { font-size: 13px; opacity: 0.8; }
+  .header select { padding: 4px 8px; border-radius: 4px; border: 1px solid #555;
+                   background: #2a2a4a; color: #fff; font-size: 13px; }
+
+  .tabs { display: flex; background: #1a1a2e; padding: 0 24px; gap: 0; }
+  .tab-btn { background: none; border: none; color: #aaa; padding: 10px 20px; cursor: pointer;
+             font-size: 14px; font-weight: 500; border-bottom: 3px solid transparent; }
+  .tab-btn:hover { color: #ddd; }
+  .tab-btn.active { color: #fff; border-bottom-color: #3498db; }
+
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  .stats { display: flex; gap: 12px; padding: 16px 24px; flex-wrap: wrap; }
+  .stat-card { background: #fff; border-radius: 8px; padding: 12px 20px; min-width: 100px;
+               text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  .stat-card .num { font-size: 28px; font-weight: 700; }
+  .stat-card .label { font-size: 12px; text-transform: uppercase; opacity: 0.6; }
+
+  .projects { padding: 0 24px 24px; }
+  .project-group { margin-top: 20px; }
+  .project-group h2 { font-size: 15px; font-weight: 600; margin-bottom: 8px;
+                       padding-bottom: 4px; border-bottom: 2px solid #ddd; }
+  .task-card { background: #fff; border-radius: 6px; padding: 12px 16px; margin-bottom: 8px;
+               box-shadow: 0 1px 2px rgba(0,0,0,0.06); border-left: 4px solid #ccc;
+               display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; }
+  .task-card .task-id { font-weight: 600; font-size: 14px; }
+  .task-card .task-status { font-size: 13px; font-weight: 600; text-align: right; }
+  .task-card .task-details { grid-column: 1 / -1; font-size: 12px; color: #666; }
+  .task-card .task-details span { margin-right: 12px; }
+  .task-card .error { color: #c0392b; font-size: 12px; grid-column: 1 / -1;
+                      background: #fdf0ef; padding: 4px 8px; border-radius: 3px; margin-top: 4px; }
+
+  .task-card.done    { border-left-color: #27ae60; }
+  .task-card.failed  { border-left-color: #e74c3c; }
+  .task-card.skipped { border-left-color: #95a5a6; }
+  .task-card.running { border-left-color: #3498db; }
+  .task-card.pending { border-left-color: #bdc3c7; }
+
+  .status-done    { color: #27ae60; }
+  .status-failed  { color: #e74c3c; }
+  .status-skipped { color: #95a5a6; }
+  .status-running { color: #3498db; }
+  .status-pending { color: #bdc3c7; }
+
+  .empty { text-align: center; padding: 60px 24px; color: #999; font-size: 16px; }
+
+  /* Config tab styles */
+  .config-section { background: #fff; border-radius: 8px; padding: 16px 20px; margin: 16px 24px;
+                    box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  .config-section h3 { font-size: 15px; font-weight: 600; margin-bottom: 12px;
+                        padding-bottom: 6px; border-bottom: 2px solid #eee; }
+
+  .settings-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+                   gap: 12px; margin-bottom: 12px; }
+  .settings-grid label { font-size: 13px; font-weight: 500; display: block; margin-bottom: 2px; }
+  .settings-grid input, .settings-grid select {
+    width: 100%; padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px;
+    font-size: 13px; }
+
+  .cfg-project { margin-bottom: 16px; }
+  .cfg-project-header { display: flex; align-items: center; gap: 10px; padding: 8px 0;
+                         cursor: pointer; user-select: none; }
+  .cfg-project-header .arrow { font-size: 12px; transition: transform 0.15s; }
+  .cfg-project-header .arrow.open { transform: rotate(90deg); }
+  .cfg-project-header .proj-name { font-weight: 600; font-size: 14px; }
+  .cfg-project-header .proj-path { font-size: 12px; color: #888; flex: 1; }
+
+  .cfg-task { background: #f9f9f9; border: 1px solid #eee; border-radius: 6px;
+              padding: 10px 14px; margin: 6px 0 6px 20px; position: relative; }
+  .cfg-task .cfg-task-header { display: flex; align-items: center; gap: 8px; }
+  .cfg-task .cfg-task-id { font-weight: 600; font-size: 13px; }
+  .cfg-task .cfg-task-tool { font-size: 12px; color: #666; background: #eef; padding: 1px 6px;
+                              border-radius: 3px; }
+  .cfg-task .cfg-task-deps { font-size: 12px; color: #888; }
+  .cfg-task .cfg-task-prompt { font-size: 12px; color: #555; margin-top: 4px;
+                                white-space: pre-wrap; max-height: 60px; overflow: hidden; }
+
+  .btn { padding: 6px 14px; border: none; border-radius: 4px; font-size: 13px;
+         cursor: pointer; font-weight: 500; }
+  .btn-primary { background: #3498db; color: #fff; }
+  .btn-primary:hover { background: #2980b9; }
+  .btn-danger { background: #e74c3c; color: #fff; }
+  .btn-danger:hover { background: #c0392b; }
+  .btn-secondary { background: #ecf0f1; color: #333; }
+  .btn-secondary:hover { background: #ddd; }
+  .btn-sm { padding: 3px 10px; font-size: 12px; }
+  .btn-group { display: flex; gap: 6px; margin-left: auto; }
+
+  .delete-btn { position: absolute; top: 8px; right: 10px; background: none; border: none;
+                color: #ccc; cursor: pointer; font-size: 16px; line-height: 1; }
+  .delete-btn:hover { color: #e74c3c; }
+  .proj-delete-btn { background: none; border: none; color: #ccc; cursor: pointer;
+                      font-size: 16px; line-height: 1; }
+  .proj-delete-btn:hover { color: #e74c3c; }
+
+  .inline-form { background: #f0f7ff; border: 1px solid #bdd7f1; border-radius: 6px;
+                 padding: 12px 14px; margin: 8px 0 8px 20px; }
+  .inline-form .form-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center;
+                            flex-wrap: wrap; }
+  .inline-form label { font-size: 12px; font-weight: 500; min-width: 70px; }
+  .inline-form input, .inline-form select, .inline-form textarea {
+    flex: 1; padding: 5px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px;
+    min-width: 120px; }
+  .inline-form textarea { resize: vertical; min-height: 60px; font-family: inherit; }
+
+  .error-banner { background: #fdf0ef; border: 1px solid #e74c3c; color: #c0392b;
+                  padding: 10px 16px; margin: 12px 24px; border-radius: 6px; font-size: 13px; }
+  .error-banner ul { margin: 6px 0 0 18px; }
+
+  .success-banner { background: #eafaf1; border: 1px solid #27ae60; color: #1e8449;
+                    padding: 10px 16px; margin: 12px 24px; border-radius: 6px; font-size: 13px; }
+
+  .actions-section { padding: 0 24px 24px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="empty" id="loading">Loading...</div>
+</div>
+
+<script>
+/* Dashboard JS — Runs tab + Config editor tab. All data from local JSON API.
+   All user-supplied text rendered via textContent (no innerHTML with data). */
+(function() {
+  var app = document.getElementById('app');
+  var currentTab = 'runs';
+
+  function el(tag, attrs, children) {
+    var e = document.createElement(tag);
+    if (attrs) Object.keys(attrs).forEach(function(k) {
+      if (k === 'textContent') e.textContent = attrs[k];
+      else if (k === 'className') e.className = attrs[k];
+      else if (k.indexOf('on') === 0) e.addEventListener(k.slice(2).toLowerCase(), attrs[k]);
+      else e.setAttribute(k, attrs[k]);
+    });
+    if (children) children.forEach(function(c) {
+      if (typeof c === 'string') e.appendChild(document.createTextNode(c));
+      else if (c) e.appendChild(c);
+    });
+    return e;
+  }
+
+  function clearEl(node) {
+    while (node.firstChild) node.removeChild(node.firstChild);
+  }
+
+  /* ------ Shared header + tabs ------ */
+  function renderShell() {
+    clearEl(app);
+
+    var header = el('div', {className: 'header'}, [
+      el('h1', {textContent: 'MultiTasks Dashboard'})
+    ]);
+    app.appendChild(header);
+
+    var tabs = el('div', {className: 'tabs'}, [
+      el('button', {className: 'tab-btn' + (currentTab === 'runs' ? ' active' : ''),
+                    textContent: 'Runs', onclick: function() { switchTab('runs'); }}),
+      el('button', {className: 'tab-btn' + (currentTab === 'config' ? ' active' : ''),
+                    textContent: 'Config', onclick: function() { switchTab('config'); }})
+    ]);
+    app.appendChild(tabs);
+
+    var runsTab = el('div', {id: 'tab-runs', className: 'tab-content' + (currentTab === 'runs' ? ' active' : '')});
+    var configTab = el('div', {id: 'tab-config', className: 'tab-content' + (currentTab === 'config' ? ' active' : '')});
+    app.appendChild(runsTab);
+    app.appendChild(configTab);
+
+    return {runs: runsTab, config: configTab};
+  }
+
+  function switchTab(tab) {
+    currentTab = tab;
+    var containers = renderShell();
+    if (tab === 'runs') {
+      var metaEl = document.querySelector('meta[name="initial-run-id"]');
+      var initialRunId = metaEl ? metaEl.getAttribute('content') : '';
+      loadRunsTab(containers.runs, initialRunId || undefined);
+    } else {
+      loadConfigTab(containers.config);
+    }
+  }
+
+  /* ====== RUNS TAB ====== */
+  function loadRunsTab(container, runId) {
+    clearEl(container);
+    container.appendChild(el('div', {className: 'empty', textContent: 'Loading runs...'}));
+    var url = '/api/state';
+    if (runId) url += '?run_id=' + encodeURIComponent(runId);
+    fetch(url).then(function(r) { return r.json(); }).then(function(data) {
+      if (data.error) {
+        clearEl(container);
+        container.appendChild(el('div', {className: 'empty', textContent: data.error}));
+        return;
+      }
+      fetch('/api/runs').then(function(r) { return r.json(); }).then(function(runs) {
+        renderRunState(container, data, runs);
+      });
+    }).catch(function(err) {
+      clearEl(container);
+      container.appendChild(el('div', {className: 'empty', textContent: 'Error: ' + String(err)}));
+    });
+  }
+
+  function renderRunState(container, data, runs) {
+    clearEl(container);
+    var tasks = data.tasks || {};
+    var counts = { done: 0, failed: 0, skipped: 0, running: 0, pending: 0 };
+    var byProject = {};
+
+    Object.keys(tasks).forEach(function(tid) {
+      var t = tasks[tid];
+      var st = t.status || 'pending';
+      counts[st] = (counts[st] || 0) + 1;
+      var proj = tid.split(':')[0] || 'unknown';
+      if (!byProject[proj]) byProject[proj] = [];
+      byProject[proj].push(t);
+    });
+
+    /* Run selector + meta */
+    var selectEl = el('select', {id: 'run-select', onchange: function() {
+      loadRunsTab(container, this.value);
+    }}, (runs || []).map(function(r) {
+      var opt = el('option', {value: r, textContent: r});
+      if (r === data.run_id) opt.selected = true;
+      return opt;
+    }));
+
+    var metaRow = el('div', {className: 'stats'}, [
+      el('div', {style: 'display:flex;align-items:center;gap:12px;flex:1'}, [
+        el('span', {textContent: 'Run: ' + (data.run_id || ''), style: 'font-weight:600;font-size:14px'}),
+        el('span', {textContent: data.created_at || '', style: 'font-size:12px;color:#888'}),
+        selectEl
+      ])
+    ]);
+    container.appendChild(metaRow);
+
+    /* Stats */
+    var statsRow = el('div', {className: 'stats'},
+      ['done','failed','skipped','running','pending'].map(function(s) {
+        return el('div', {className: 'stat-card'}, [
+          el('div', {className: 'num status-' + s, textContent: String(counts[s])}),
+          el('div', {className: 'label', textContent: s})
+        ]);
+      })
+    );
+    container.appendChild(statsRow);
+
+    /* Projects */
+    var projectsDiv = el('div', {className: 'projects'});
+    var projectNames = Object.keys(byProject).sort();
+    if (projectNames.length === 0) {
+      projectsDiv.appendChild(el('div', {className: 'empty', textContent: 'No tasks in this run.'}));
+    }
+    projectNames.forEach(function(proj) {
+      var group = el('div', {className: 'project-group'}, [el('h2', {textContent: proj})]);
+      byProject[proj].forEach(function(t) {
+        var st = t.status || 'pending';
+        var card = el('div', {className: 'task-card ' + st}, [
+          el('div', {className: 'task-id', textContent: t.task_id}),
+          el('div', {className: 'task-status status-' + st, textContent: st.toUpperCase()})
+        ]);
+        var details = el('div', {className: 'task-details'});
+        if (t.duration_s != null) details.appendChild(el('span', {textContent: 'Duration: ' + t.duration_s + 's'}));
+        if (t.git_baseline) details.appendChild(el('span', {textContent: 'Baseline: ' + t.git_baseline.substring(0, 8)}));
+        if (t.log_file) details.appendChild(el('span', {textContent: 'Log: ' + t.log_file}));
+        card.appendChild(details);
+        if (t.error) card.appendChild(el('div', {className: 'error', textContent: t.error}));
+        group.appendChild(card);
+      });
+      projectsDiv.appendChild(group);
+    });
+    container.appendChild(projectsDiv);
+  }
+
+  /* ====== CONFIG TAB ====== */
+  var configData = null;
+  var configBanner = null;
+
+  function loadConfigTab(container) {
+    clearEl(container);
+    container.appendChild(el('div', {className: 'empty', textContent: 'Loading config...'}));
+    fetch('/api/config').then(function(r) {
+      if (!r.ok) {
+        return r.json().then(function(data) {
+          clearEl(container);
+          var errDiv = el('div', {className: 'error-banner'});
+          errDiv.appendChild(el('strong', {textContent: 'Failed to load config (HTTP ' + r.status + '):'}));
+          errDiv.appendChild(el('p', {textContent: data.error || 'Unknown server error'}));
+          container.appendChild(errDiv);
+        });
+      }
+      return r.json().then(function(data) {
+        if (data.error) {
+          clearEl(container);
+          var errDiv = el('div', {className: 'error-banner'});
+          errDiv.appendChild(el('strong', {textContent: 'Config error:'}));
+          errDiv.appendChild(el('p', {textContent: data.error}));
+          container.appendChild(errDiv);
+          return;
+        }
+        configData = data;
+        renderConfigTab(container);
+      });
+    }).catch(function(err) {
+      clearEl(container);
+      container.appendChild(el('div', {className: 'empty', textContent: 'Error loading config: ' + err}));
+    });
+  }
+
+  function renderConfigTab(container) {
+    clearEl(container);
+    var data = configData;
+    if (!data) return;
+
+    /* Error/success banner placeholder */
+    configBanner = el('div', {id: 'config-banner'});
+    container.appendChild(configBanner);
+
+    /* Settings section */
+    var settingsSection = el('div', {className: 'config-section'}, [
+      el('h3', {textContent: 'Settings'})
+    ]);
+    var settings = data.settings || {};
+    var grid = el('div', {className: 'settings-grid'});
+
+    var settingsFields = [
+      {key: 'max_parallel', label: 'Max Parallel', type: 'number'},
+      {key: 'timeout', label: 'Timeout (s)', type: 'number'},
+      {key: 'notify', label: 'Notify', type: 'select', options: ['none', 'whatsapp', 'telegram']},
+      {key: 'dashboard_port', label: 'Dashboard Port', type: 'number'},
+      {key: 'dirty_workspace', label: 'Dirty Workspace', type: 'select', options: ['warn', 'block', 'ignore']},
+    ];
+
+    var settingsInputs = {};
+    settingsFields.forEach(function(f) {
+      var group = el('div');
+      group.appendChild(el('label', {textContent: f.label}));
+      if (f.type === 'select') {
+        var sel = el('select', {id: 'setting-' + f.key});
+        f.options.forEach(function(o) {
+          var opt = el('option', {value: o, textContent: o});
+          if (String(settings[f.key]) === o) opt.selected = true;
+          sel.appendChild(opt);
+        });
+        settingsInputs[f.key] = sel;
+        group.appendChild(sel);
+      } else {
+        var inp = el('input', {type: f.type, value: String(settings[f.key] || ''), id: 'setting-' + f.key});
+        settingsInputs[f.key] = inp;
+        group.appendChild(inp);
+      }
+      grid.appendChild(group);
+    });
+
+    settingsSection.appendChild(grid);
+    settingsSection.appendChild(el('button', {className: 'btn btn-primary', textContent: 'Save Settings',
+      onclick: function() {
+        var payload = {};
+        settingsFields.forEach(function(f) {
+          var val = settingsInputs[f.key].value;
+          if (f.type === 'number') val = parseInt(val, 10);
+          payload[f.key] = val;
+        });
+        postConfig('/api/config/settings', payload, container);
+      }
+    }));
+    container.appendChild(settingsSection);
+
+    /* Projects section */
+    var projSection = el('div', {className: 'config-section'}, [
+      el('h3', {textContent: 'Projects'})
+    ]);
+    var projects = data.projects || {};
+    Object.keys(projects).forEach(function(projName) {
+      projSection.appendChild(renderProjectBlock(projName, projects[projName], container));
+    });
+
+    /* Add Project button */
+    var addProjArea = el('div', {id: 'add-project-area', style: 'margin-top:12px'});
+    addProjArea.appendChild(el('button', {className: 'btn btn-secondary', textContent: '+ Add Project',
+      onclick: function() { showAddProjectForm(addProjArea, container); }
+    }));
+    projSection.appendChild(addProjArea);
+    container.appendChild(projSection);
+
+    /* Actions section */
+    var actionsSection = el('div', {className: 'config-section'}, [
+      el('h3', {textContent: 'Actions'})
+    ]);
+    var validateResult = el('div', {id: 'validate-result'});
+    actionsSection.appendChild(el('button', {className: 'btn btn-primary', textContent: 'Validate Config',
+      onclick: function() {
+        fetch('/api/validate', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'})
+          .then(function(r) { return r.json(); })
+          .then(function(res) {
+            clearEl(validateResult);
+            if (res.ok) {
+              validateResult.appendChild(el('div', {className: 'success-banner',
+                style: 'margin:8px 0',
+                textContent: 'Config OK \u2014 ' + res.order.length + ' tasks, order: ' + res.order.join(' \u2192 ')}));
+            } else {
+              var errDiv = el('div', {className: 'error-banner', style: 'margin:8px 0'});
+              errDiv.appendChild(el('strong', {textContent: 'Validation failed:'}));
+              var ul = el('ul');
+              res.errors.forEach(function(e) { ul.appendChild(el('li', {textContent: e})); });
+              errDiv.appendChild(ul);
+              validateResult.appendChild(errDiv);
+            }
+          });
+      }
+    }));
+    actionsSection.appendChild(el('div', {style: 'font-size:12px;color:#888;margin-top:4px',
+      textContent: 'Validates the last saved configuration.'}));
+    actionsSection.appendChild(validateResult);
+    container.appendChild(actionsSection);
+  }
+
+  function renderProjectBlock(projName, projData, tabContainer) {
+    var block = el('div', {className: 'cfg-project'});
+    var expanded = true;
+
+    var arrow = el('span', {className: 'arrow open', textContent: '\u25B8'});
+    var header = el('div', {className: 'cfg-project-header'}, [
+      arrow,
+      el('span', {className: 'proj-name', textContent: projName}),
+      el('span', {className: 'proj-path', textContent: projData.path || ''}),
+      el('button', {className: 'proj-delete-btn', textContent: '\u00D7', title: 'Delete project',
+        onclick: function(e) {
+          e.stopPropagation();
+          if (!confirm('Delete project "' + projName + '" and all its tasks?')) return;
+          postConfig('/api/config/projects/delete', {name: projName}, tabContainer);
+        }
+      })
+    ]);
+    header.addEventListener('click', function() {
+      expanded = !expanded;
+      arrow.className = 'arrow' + (expanded ? ' open' : '');
+      body.style.display = expanded ? 'block' : 'none';
+    });
+    block.appendChild(header);
+
+    var body = el('div', {className: 'cfg-project-body'});
+    var tasks = projData.tasks || [];
+    tasks.forEach(function(task) {
+      body.appendChild(renderTaskCard(projName, task, tabContainer));
+    });
+
+    /* Add Task button */
+    var addTaskArea = el('div', {id: 'add-task-' + projName, style: 'margin:6px 0 6px 20px'});
+    addTaskArea.appendChild(el('button', {className: 'btn btn-secondary btn-sm', textContent: '+ Add Task',
+      onclick: function() { showAddTaskForm(projName, addTaskArea, tabContainer); }
+    }));
+    body.appendChild(addTaskArea);
+    block.appendChild(body);
+    return block;
+  }
+
+  function renderTaskCard(projName, task, tabContainer) {
+    var card = el('div', {className: 'cfg-task'});
+    var headerRow = el('div', {className: 'cfg-task-header'}, [
+      el('span', {className: 'cfg-task-id', textContent: task.id}),
+      el('span', {className: 'cfg-task-tool', textContent: task.tool || ''}),
+    ]);
+    if (task.depends_on && task.depends_on.length > 0) {
+      headerRow.appendChild(el('span', {className: 'cfg-task-deps', textContent: 'deps: ' + task.depends_on.join(', ')}));
+    }
+    if (task.review_of) {
+      headerRow.appendChild(el('span', {className: 'cfg-task-deps', textContent: 'review_of: ' + task.review_of}));
+    }
+    card.appendChild(headerRow);
+    card.appendChild(el('div', {className: 'cfg-task-prompt', textContent: task.prompt || ''}));
+
+    /* Edit button */
+    var btnGroup = el('div', {className: 'btn-group', style: 'margin-top:6px'});
+    btnGroup.appendChild(el('button', {className: 'btn btn-secondary btn-sm', textContent: 'Edit',
+      onclick: function() { showEditTaskForm(projName, task, card, tabContainer); }
+    }));
+    card.appendChild(btnGroup);
+
+    /* Delete button */
+    card.appendChild(el('button', {className: 'delete-btn', textContent: '\u00D7', title: 'Delete task',
+      onclick: function() {
+        if (!confirm('Delete task "' + task.id + '"?')) return;
+        postConfig('/api/config/tasks/delete', {project: projName, id: task.id}, tabContainer);
+      }
+    }));
+    return card;
+  }
+
+  /* ------ Inline forms ------ */
+
+  function showEditTaskForm(projName, task, replaceEl, tabContainer) {
+    var form = el('div', {className: 'inline-form'});
+    var promptInput = el('textarea', {value: task.prompt || ''});
+    var toolSelect = el('select');
+    ['claude', 'codex', 'codex-review'].forEach(function(t) {
+      var opt = el('option', {value: t, textContent: t});
+      if (t === task.tool) opt.selected = true;
+      toolSelect.appendChild(opt);
+    });
+    var depsInput = el('input', {type: 'text', value: (task.depends_on || []).join(', '),
+                                  placeholder: 'e.g. t1, other_proj:t2'});
+    var reviewInput = el('input', {type: 'text', value: task.review_of || '',
+                                    placeholder: 'e.g. t1'});
+
+    form.appendChild(el('div', {className: 'form-row'}, [
+      el('label', {textContent: 'Prompt'}), promptInput
+    ]));
+    form.appendChild(el('div', {className: 'form-row'}, [
+      el('label', {textContent: 'Tool'}), toolSelect
+    ]));
+    form.appendChild(el('div', {className: 'form-row'}, [
+      el('label', {textContent: 'Depends on'}), depsInput
+    ]));
+    form.appendChild(el('div', {className: 'form-row'}, [
+      el('label', {textContent: 'Review of'}), reviewInput
+    ]));
+    form.appendChild(el('div', {className: 'form-row'}, [
+      el('button', {className: 'btn btn-primary btn-sm', textContent: 'Save',
+        onclick: function() {
+          var deps = depsInput.value.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
+          postConfig('/api/config/tasks', {
+            project: projName, id: task.id,
+            prompt: promptInput.value, tool: toolSelect.value,
+            depends_on: deps, review_of: reviewInput.value.trim()
+          }, tabContainer);
+        }
+      }),
+      el('button', {className: 'btn btn-secondary btn-sm', textContent: 'Cancel',
+        onclick: function() { replaceEl.parentNode.replaceChild(renderTaskCard(projName, task, tabContainer), form); }
+      })
+    ]));
+
+    replaceEl.parentNode.replaceChild(form, replaceEl);
+  }
+
+  function showAddTaskForm(projName, area, tabContainer) {
+    clearEl(area);
+    var form = el('div', {className: 'inline-form'});
+    var idInput = el('input', {type: 'text', placeholder: 'task-id'});
+    var promptInput = el('textarea', {placeholder: 'Prompt text...'});
+    var toolSelect = el('select');
+    ['claude', 'codex', 'codex-review'].forEach(function(t) {
+      toolSelect.appendChild(el('option', {value: t, textContent: t}));
+    });
+    var depsInput = el('input', {type: 'text', placeholder: 'e.g. t1, other:t2'});
+    var reviewInput = el('input', {type: 'text', placeholder: 'review_of (optional)'});
+
+    form.appendChild(el('div', {className: 'form-row'}, [el('label', {textContent: 'ID'}), idInput]));
+    form.appendChild(el('div', {className: 'form-row'}, [el('label', {textContent: 'Prompt'}), promptInput]));
+    form.appendChild(el('div', {className: 'form-row'}, [el('label', {textContent: 'Tool'}), toolSelect]));
+    form.appendChild(el('div', {className: 'form-row'}, [el('label', {textContent: 'Depends on'}), depsInput]));
+    form.appendChild(el('div', {className: 'form-row'}, [el('label', {textContent: 'Review of'}), reviewInput]));
+    form.appendChild(el('div', {className: 'form-row'}, [
+      el('button', {className: 'btn btn-primary btn-sm', textContent: 'Save',
+        onclick: function() {
+          var deps = depsInput.value.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
+          postConfig('/api/config/tasks', {
+            project: projName, id: idInput.value.trim(),
+            prompt: promptInput.value, tool: toolSelect.value,
+            depends_on: deps, review_of: reviewInput.value.trim()
+          }, tabContainer);
+        }
+      }),
+      el('button', {className: 'btn btn-secondary btn-sm', textContent: 'Cancel',
+        onclick: function() {
+          clearEl(area);
+          area.appendChild(el('button', {className: 'btn btn-secondary btn-sm', textContent: '+ Add Task',
+            onclick: function() { showAddTaskForm(projName, area, tabContainer); }
+          }));
+        }
+      })
+    ]));
+    area.appendChild(form);
+  }
+
+  function showAddProjectForm(area, tabContainer) {
+    clearEl(area);
+    var form = el('div', {className: 'inline-form'});
+    var nameInput = el('input', {type: 'text', placeholder: 'project-name'});
+    var pathInput = el('input', {type: 'text', placeholder: '/absolute/path/to/project'});
+    var taskIdInput = el('input', {type: 'text', placeholder: 'first-task-id'});
+    var promptInput = el('textarea', {placeholder: 'First task prompt...'});
+    var toolSelect = el('select');
+    ['claude', 'codex', 'codex-review'].forEach(function(t) {
+      toolSelect.appendChild(el('option', {value: t, textContent: t}));
+    });
+
+    form.appendChild(el('div', {className: 'form-row'}, [el('label', {textContent: 'Project'}), nameInput]));
+    form.appendChild(el('div', {className: 'form-row'}, [el('label', {textContent: 'Path'}), pathInput]));
+    form.appendChild(el('div', {className: 'form-row'}, [el('label', {textContent: 'Task ID'}), taskIdInput]));
+    form.appendChild(el('div', {className: 'form-row'}, [el('label', {textContent: 'Prompt'}), promptInput]));
+    form.appendChild(el('div', {className: 'form-row'}, [el('label', {textContent: 'Tool'}), toolSelect]));
+    form.appendChild(el('div', {className: 'form-row'}, [
+      el('button', {className: 'btn btn-primary btn-sm', textContent: 'Save',
+        onclick: function() {
+          postConfig('/api/config/tasks', {
+            project: nameInput.value.trim(),
+            project_path: pathInput.value.trim(),
+            id: taskIdInput.value.trim(),
+            prompt: promptInput.value, tool: toolSelect.value,
+          }, tabContainer);
+        }
+      }),
+      el('button', {className: 'btn btn-secondary btn-sm', textContent: 'Cancel',
+        onclick: function() {
+          clearEl(area);
+          area.appendChild(el('button', {className: 'btn btn-secondary', textContent: '+ Add Project',
+            onclick: function() { showAddProjectForm(area, tabContainer); }
+          }));
+        }
+      })
+    ]));
+    area.appendChild(form);
+  }
+
+  /* ------ POST helper with full re-fetch ------ */
+  function postConfig(endpoint, payload, tabContainer) {
+    fetch(endpoint, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    }).then(function(r) { return r.json(); }).then(function(res) {
+      if (res.ok) {
+        /* Re-fetch full config to re-render */
+        fetch('/api/config').then(function(r) { return r.json(); }).then(function(data) {
+          configData = data;
+          renderConfigTab(tabContainer);
+        });
+      } else {
+        showBannerError(res.errors || ['Unknown error']);
+      }
+    }).catch(function(err) {
+      showBannerError([String(err)]);
+    });
+  }
+
+  function showBannerError(errors) {
+    if (!configBanner) return;
+    clearEl(configBanner);
+    var div = el('div', {className: 'error-banner'});
+    div.appendChild(el('strong', {textContent: 'Error:'}));
+    var ul = el('ul');
+    errors.forEach(function(e) { ul.appendChild(el('li', {textContent: e})); });
+    div.appendChild(ul);
+    configBanner.appendChild(div);
+  }
+
+  /* ------ Init ------ */
+  switchTab('runs');
+})();
+</script>
+</body>
+</html>

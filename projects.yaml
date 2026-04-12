@@ -1,0 +1,37 @@
+projects:
+  vultr:
+    path: /mnt/c/Python Code/vultr
+    tasks:
+      - id: rssvault-fix
+        prompt: "Fix Anthropic Blog RSS 403 error in scripts/rssvault_run.py"
+        tool: claude
+        depends_on: []
+
+      - id: rssvault-review
+        prompt: "Review the rssvault-fix changes for security issues"
+        tool: codex-review
+        review_of: rssvault-fix
+        depends_on: [rssvault-fix]
+
+  options_day_trader:
+    path: /mnt/c/Python Code/options_day_trader
+    tasks:
+      - id: news-api-test
+        prompt: "Write tests for the news ingest endpoint"
+        tool: claude
+        depends_on: [vultr:rssvault-fix]
+
+      - id: news-api-review
+        prompt: "Review news API test coverage"
+        tool: codex-review
+        review_of: news-api-test
+        depends_on: [news-api-test]
+
+settings:
+  max_parallel: 2
+  notify: none
+  dashboard_port: 18300
+  timeout: 600
+  state_dir: state
+  log_dir: logs
+  dirty_workspace: warn
