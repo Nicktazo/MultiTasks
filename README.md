@@ -154,8 +154,12 @@ The dashboard is served at `http://127.0.0.1:<port>` (default port: 18300).
 Two tabs:
 
 **Runs tab**: run metadata, per-task status/duration/errors, run selector
-dropdown for historical runs. **Run All** and **Retry Latest** buttons launch
-pipelines directly from the browser — status updates via 3-second polling.
+dropdown for historical runs, and an **event timeline** showing chronological
+run events (task started/done/failed/skipped, run started/finished).
+**Run All** and **Retry Latest** buttons launch pipelines directly from the
+browser — status updates via SSE (Server-Sent Events) with automatic fallback
+to 3-second polling if SSE disconnects. The `/api/events` endpoint pushes
+`run-status` and `state-updated` events in real time (~1s latency).
 
 **Config tab**: add/edit/delete projects and tasks, update settings, validate
 the configuration — all from the browser. CLI YAML editing still works
@@ -191,6 +195,7 @@ core/
   scheduler.py         Main orchestration loop: bounded ThreadPoolExecutor + per-project locks
   runner.py            CLI wrappers (claude/codex/codex-review), git snapshot, log writing
   state.py             RunState + TaskState: thread-safe state machine, atomic JSON persistence
+  events.py            EventLogger: thread-safe append-only JSONL event log per run
   notify.py            WhatsApp/Telegram notifications via openclaw
   run_api.py           Reusable execute_run/execute_retry + PipelineRunner for dashboard
   dashboard.py         HTTP dashboard server (config editor + triggered runs)
@@ -200,6 +205,8 @@ tests/
   test_scheduler.py    Scheduler + config + DAG + runner integration tests
   test_retry.py        Retry / resume state tests
   test_dashboard.py    Dashboard HTTP endpoint tests (read-only + POST)
+  test_sse.py          SSE endpoint unit + integration tests
+  test_events.py       EventLogger unit tests
   test_config_writer.py Config writer round-trip, mutation, validation tests
   test_notify.py       Notification sanitization tests
   test_run_api.py      Run API: execute_run, execute_retry, PipelineRunner tests

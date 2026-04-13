@@ -138,6 +138,26 @@
   .run-status-bar .dot-done { background: #27ae60; }
   .run-status-bar .dot-failed { background: #e74c3c; }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  /* Event timeline */
+  .event-timeline { padding: 0 24px 24px; }
+  .event-timeline h3 { font-size: 15px; font-weight: 600; margin-bottom: 10px;
+                        padding-bottom: 4px; border-bottom: 2px solid #ddd; }
+  .event-item { display: flex; gap: 10px; padding: 6px 0; border-bottom: 1px solid #f0f0f0;
+                font-size: 13px; align-items: baseline; }
+  .event-item:last-child { border-bottom: none; }
+  .event-ts { color: #888; font-family: monospace; font-size: 12px; white-space: nowrap; min-width: 80px; }
+  .event-type { font-weight: 600; min-width: 110px; }
+  .event-type.type-run_started { color: #3498db; }
+  .event-type.type-run_finished { color: #27ae60; }
+  .event-type.type-task_running { color: #3498db; }
+  .event-type.type-task_done { color: #27ae60; }
+  .event-type.type-task_failed { color: #e74c3c; }
+  .event-type.type-task_skipped { color: #95a5a6; }
+  .event-type.type-task_inherited { color: #8e44ad; }
+  .event-tid { color: #555; font-family: monospace; font-size: 12px; min-width: 120px; }
+  .event-msg { color: #666; flex: 1; }
+  .no-events { color: #999; font-size: 13px; font-style: italic; padding: 8px 0; }
 </style>
 </head>
 <body>
@@ -198,6 +218,8 @@
 
   function switchTab(tab) {
     currentTab = tab;
+    disconnectSSE();
+    stopPolling();
     var containers = renderShell();
     if (tab === 'runs') {
       var metaEl = document.querySelector('meta[name="initial-run-id"]');
@@ -211,17 +233,19 @@
   /* ====== RUNS TAB ====== */
   var pollTimer = null;
   var runsBanner = null;
+  var eventSource = null;
+  var selectedRunId = null;  // null = latest, string = specific historical run
 
   function startPolling(container) {
     stopPolling();
     pollTimer = setInterval(function() {
       fetch('/api/run-status').then(function(r) { return r.json(); }).then(function(st) {
         updateStatusBar(st);
-        if (st.status === 'running') {
+        if (!selectedRunId) {
           loadRunsContent(container);
-        } else {
+        }
+        if (st.status !== 'running') {
           stopPolling();
-          loadRunsContent(container);
         }
       });
     }, 3000);
@@ -229,6 +253,36 @@
 
   function stopPolling() {
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }
+
+  function connectSSE(contentContainer) {
+    stopPolling();
+    if (eventSource) eventSource.close();
+
+    eventSource = new EventSource('/api/events');
+
+    eventSource.addEventListener('run-status', function(e) {
+      var st = JSON.parse(e.data);
+      updateStatusBar(st);
+      if (!selectedRunId && (st.status === 'done' || st.status === 'failed')) {
+        loadRunsContent(contentContainer);
+      }
+    });
+
+    eventSource.addEventListener('state-updated', function(e) {
+      if (!selectedRunId) {
+        loadRunsContent(contentContainer);
+      }
+    });
+
+    eventSource.onerror = function() {
+      if (eventSource) { eventSource.close(); eventSource = null; }
+      startPolling(contentContainer);
+    };
+  }
+
+  function disconnectSSE() {
+    if (eventSource) { eventSource.close(); eventSource = null; }
   }
 
   function updateStatusBar(st) {
@@ -258,6 +312,7 @@
   }
 
   function triggerRun(mode, container) {
+    selectedRunId = null;  // new run → follow latest
     fetch('/api/run', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -265,7 +320,7 @@
     }).then(function(r) { return r.json(); }).then(function(res) {
       if (res.ok) {
         updateStatusBar(res);
-        startPolling(container);
+        connectSSE(container);
       } else {
         showRunsBanner((res.errors || ['Unknown error']).join('; '), true);
       }
@@ -283,6 +338,7 @@
   }
 
   function loadRunsTab(container, runId) {
+    selectedRunId = runId || null;
     clearEl(container);
 
     // Content area (created first so closures can reference it)
@@ -308,32 +364,34 @@
     container.appendChild(content);
     loadRunsContent(content, runId);
 
-    // Check current run status and start polling if needed
-    fetch('/api/run-status').then(function(r) { return r.json(); }).then(function(st) {
-      updateStatusBar(st);
-      if (st.status === 'running') startPolling(content);
-    });
+    // SSE provides initial status on connect; falls back to polling on error
+    connectSSE(content);
   }
 
   function loadRunsContent(container, runId) {
-    var url = '/api/state';
-    if (runId) url += '?run_id=' + encodeURIComponent(runId);
-    fetch(url).then(function(r) { return r.json(); }).then(function(data) {
-      if (data.error) {
+    var detailUrl = runId
+      ? '/api/run-detail?run_id=' + encodeURIComponent(runId)
+      : '/api/latest-run-detail';
+    Promise.all([
+      fetch(detailUrl).then(function(r) { return r.json(); }),
+      fetch('/api/runs').then(function(r) { return r.json(); })
+    ]).then(function(results) {
+      var detail = results[0];
+      var runs = results[1];
+      if (!detail.ok) {
         clearEl(container);
-        container.appendChild(el('div', {className: 'empty', textContent: data.error}));
+        var msg = (detail.errors || []).join('; ') || 'Unknown error';
+        container.appendChild(el('div', {className: 'empty', textContent: msg}));
         return;
       }
-      fetch('/api/runs').then(function(r) { return r.json(); }).then(function(runs) {
-        renderRunState(container, data, runs);
-      });
+      renderRunState(container, detail.run, runs, detail.events);
     }).catch(function(err) {
       clearEl(container);
       container.appendChild(el('div', {className: 'empty', textContent: 'Error: ' + String(err)}));
     });
   }
 
-  function renderRunState(container, data, runs) {
+  function renderRunState(container, data, runs, events) {
     clearEl(container);
     var tasks = data.tasks || {};
     var counts = { done: 0, failed: 0, skipped: 0, running: 0, pending: 0 };
@@ -350,6 +408,9 @@
 
     /* Run selector + meta */
     var selectEl = el('select', {id: 'run-select', onchange: function() {
+      // First option = latest run; selecting it clears the pin
+      var idx = this.selectedIndex;
+      selectedRunId = (idx === 0) ? null : this.value;
       loadRunsContent(container, this.value);
     }}, (runs || []).map(function(r) {
       var opt = el('option', {value: r, textContent: r});
@@ -402,6 +463,27 @@
       projectsDiv.appendChild(group);
     });
     container.appendChild(projectsDiv);
+
+    /* Event timeline */
+    var timelineDiv = el('div', {className: 'event-timeline'}, [
+      el('h3', {textContent: 'Event Timeline'})
+    ]);
+    if (!events || events.length === 0) {
+      timelineDiv.appendChild(el('div', {className: 'no-events', textContent: 'No event log for this run.'}));
+    } else {
+      events.forEach(function(ev) {
+        var ts = (ev.ts || '').split('T')[1] || ev.ts || '';
+        if (ts.length > 8) ts = ts.substring(0, 8);
+        var item = el('div', {className: 'event-item'}, [
+          el('span', {className: 'event-ts', textContent: ts}),
+          el('span', {className: 'event-type type-' + (ev.type || ''), textContent: ev.type || ''}),
+          el('span', {className: 'event-tid', textContent: ev.task_id || ''}),
+          el('span', {className: 'event-msg', textContent: ev.message || ''})
+        ]);
+        timelineDiv.appendChild(item);
+      });
+    }
+    container.appendChild(timelineDiv);
   }
 
   /* ====== CONFIG TAB ====== */

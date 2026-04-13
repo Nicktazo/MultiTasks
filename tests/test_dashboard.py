@@ -287,7 +287,7 @@ def test_port_binding_error(monkeypatch, capsys):
     def _raise_oserror(*args, **kwargs):
         raise OSError("Address already in use")
 
-    monkeypatch.setattr(dashboard, "HTTPServer", _raise_oserror)
+    monkeypatch.setattr(dashboard, "ThreadingHTTPServer", _raise_oserror)
 
     result = dashboard.start_dashboard(port=9999, state_dir="/tmp/nonexistent")
     assert result is False
@@ -410,3 +410,81 @@ def test_post_invalid_json(config_dashboard_server):
     data = json.loads(body)
     assert data["ok"] is False
     assert any("Invalid JSON" in e for e in data["errors"])
+
+
+# ---------------------------------------------------------------------------
+# Phase 7: Run detail endpoints
+# ---------------------------------------------------------------------------
+
+def _make_event_file(state_dir: str, run_id: str, events: list[dict]) -> None:
+    """Write a .events.jsonl file."""
+    os.makedirs(state_dir, exist_ok=True)
+    path = os.path.join(state_dir, f"{run_id}.events.jsonl")
+    with open(path, "w", encoding="utf-8") as f:
+        for ev in events:
+            f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+
+
+def test_run_detail_returns_run_and_events(dashboard_server):
+    """GET /api/run-detail returns run state + events."""
+    base_url, state_dir = dashboard_server
+    _make_state_file(state_dir, "20260413-100000")
+    _make_event_file(state_dir, "20260413-100000", [
+        {"ts": "2026-04-13T10:00:00", "type": "run_started", "run_id": "20260413-100000",
+         "task_id": None, "status": None, "message": "Pipeline started", "data": None},
+        {"ts": "2026-04-13T10:00:01", "type": "task_done", "run_id": "20260413-100000",
+         "task_id": "projA:t1", "status": "done", "message": "OK", "data": None},
+    ])
+
+    status, _, body = _get(f"{base_url}/api/run-detail?run_id=20260413-100000")
+    assert status == 200
+    data = json.loads(body)
+    assert data["ok"] is True
+    assert data["run"]["run_id"] == "20260413-100000"
+    assert len(data["events"]) == 2
+    assert data["events"][0]["type"] == "run_started"
+
+
+def test_run_detail_missing_returns_404(dashboard_server):
+    """GET /api/run-detail with nonexistent run_id returns 404."""
+    base_url, state_dir = dashboard_server
+    _make_state_file(state_dir, "20260413-100000")
+
+    status, _, body = _get(f"{base_url}/api/run-detail?run_id=nonexistent")
+    assert status == 404
+    data = json.loads(body)
+    assert data["ok"] is False
+
+
+def test_latest_run_detail_returns_latest(dashboard_server):
+    """GET /api/latest-run-detail returns the most recent run."""
+    base_url, state_dir = dashboard_server
+    _make_state_file(state_dir, "20260413-090000")
+    _make_state_file(state_dir, "20260413-100000")
+
+    status, _, body = _get(f"{base_url}/api/latest-run-detail")
+    assert status == 200
+    data = json.loads(body)
+    assert data["ok"] is True
+    assert data["run"]["run_id"] == "20260413-100000"
+
+
+def test_run_detail_no_event_file(dashboard_server):
+    """Run detail with no events file returns empty events list."""
+    base_url, state_dir = dashboard_server
+    _make_state_file(state_dir, "20260413-100000")
+
+    status, _, body = _get(f"{base_url}/api/run-detail?run_id=20260413-100000")
+    assert status == 200
+    data = json.loads(body)
+    assert data["ok"] is True
+    assert data["events"] == []
+
+
+def test_latest_run_detail_no_runs(dashboard_server):
+    """GET /api/latest-run-detail with no runs returns 404."""
+    base_url, _ = dashboard_server
+    status, _, body = _get(f"{base_url}/api/latest-run-detail")
+    assert status == 404
+    data = json.loads(body)
+    assert data["ok"] is False

@@ -5,7 +5,9 @@ from __future__ import annotations
 import html
 import json
 import os
+import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 import yaml
@@ -49,6 +51,13 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             self._serve_config()
         elif path == "/api/run-status":
             self._send_json(200, self.runner.get_status())
+        elif path == "/api/run-detail":
+            run_id = params.get("run_id", [None])[0]
+            self._serve_run_detail(run_id)
+        elif path == "/api/latest-run-detail":
+            self._serve_run_detail(None)
+        elif path == "/api/events":
+            self._serve_events()
         else:
             self._send_json(404, {"error": f"Not found: {self.path}"})
 
@@ -218,6 +227,97 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         files.sort(reverse=True)
         return files
 
+    def _serve_run_detail(self, run_id: str | None) -> None:
+        run_files = self._list_run_files()
+        if not run_files:
+            self._send_json(404, {"ok": False, "run": None, "events": [], "errors": ["No runs found"]})
+            return
+
+        if run_id is None:
+            target_file = run_files[0]
+            run_id = target_file.removesuffix(".json")
+        else:
+            target_file = f"{run_id}.json"
+            if target_file not in run_files:
+                self._send_json(404, {"ok": False, "run": None, "events": [],
+                                      "errors": [f"Run not found: {run_id}"]})
+                return
+
+        path = os.path.join(self.state_dir, target_file)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                run_data = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            self._send_json(500, {"ok": False, "run": None, "events": [],
+                                  "errors": [f"Failed to load run state: {e}"]})
+            return
+
+        events = self._load_event_log(run_id)
+        self._send_json(200, {"ok": True, "run": run_data, "events": events, "errors": []})
+
+    def _load_event_log(self, run_id: str) -> list[dict]:
+        event_path = os.path.join(self.state_dir, f"{run_id}.events.jsonl")
+        if not os.path.isfile(event_path):
+            return []
+        events = []
+        try:
+            with open(event_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        events.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+        except OSError:
+            return []
+        return events
+
+    def _serve_events(self) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+
+        last_status = None
+        last_state_key: tuple[str, float] = ("", 0.0)
+
+        try:
+            while True:
+                current = self.runner.get_status()
+                if current != last_status:
+                    last_status = current
+                    self._write_sse("run-status", current)
+
+                state_key = self._get_latest_state_key()
+                if state_key != last_state_key:
+                    last_state_key = state_key
+                    self._write_sse("state-updated", {})
+
+                time.sleep(1)
+        except (BrokenPipeError, ConnectionError, OSError):
+            pass  # client disconnected
+
+    def _write_sse(self, event: str, data: dict) -> None:
+        payload = json.dumps(data, ensure_ascii=False)
+        self.wfile.write(f"event: {event}\ndata: {payload}\n\n".encode())
+        self.wfile.flush()
+
+    def _get_latest_state_key(self) -> tuple[str, float]:
+        """Return (filename, mtime) of the latest state file."""
+        files = self._list_run_files()
+        if not files:
+            return ("", 0.0)
+        filename = files[0]
+        path = os.path.join(self.state_dir, filename)
+        try:
+            return (filename, os.path.getmtime(path))
+        except OSError:
+            return (filename, 0.0)
+
     def _send_json(self, code: int, data: object) -> None:
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
@@ -254,7 +354,7 @@ def start_dashboard(port: int, state_dir: str = "state",
     )
 
     try:
-        server = HTTPServer(("127.0.0.1", port), handler)
+        server = ThreadingHTTPServer(("127.0.0.1", port), handler)
     except OSError as e:
         print(f"Error: cannot start dashboard on port {port}: {e}", file=sys.stderr)
         return False

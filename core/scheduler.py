@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .dag import build_scoped_dag, get_execution_order, should_skip
+from .events import EventLogger
 from .notify import notify_task_failed, notify_pipeline_done
 from .runner import capture_git_snapshot, run_task
 from .state import RunState, DONE, FAILED
@@ -62,7 +63,8 @@ def resolve_project_scope(config: Config, project: str) -> set[str]:
 # ---------------------------------------------------------------------------
 
 def _execute_task(config: Config, state: RunState, task_id: str,
-                  project_lock: threading.Lock) -> TaskExecutionResult:
+                  project_lock: threading.Lock,
+                  event_logger: EventLogger | None = None) -> TaskExecutionResult:
     """Execute a single task. Called from a worker thread.
 
     Acquires project_lock for the duration of execution.
@@ -98,6 +100,9 @@ def _execute_task(config: Config, state: RunState, task_id: str,
                       f"{[f.strip() for f in shown]}")
 
         state.set_running(task_id, snapshot.commit, snapshot.dirty_files)
+        if event_logger:
+            event_logger.log("task_running", task_id=task_id, status="running",
+                             message=f"Task started (tool={task.tool})")
 
         # Review baseline
         baseline = None
@@ -130,18 +135,25 @@ def _execute_task(config: Config, state: RunState, task_id: str,
             state.set_failed(task_id, error, result.log_file)
             print(f"  FAIL  {task_id} (no baseline for review)")
             notify_task_failed(config.settings, task_id, error)
+            if event_logger:
+                event_logger.log("task_failed", task_id=task_id, status="failed", message=error)
             return TaskExecutionResult(task_id, project, FAILED, error)
 
         if result.exit_code == -4:
             reason = result.stderr[:500] or "No changes to review"
             state.set_skipped(task_id, reason)
             print(f"  skip  {task_id} ({reason})")
+            if event_logger:
+                event_logger.log("task_skipped", task_id=task_id, status="skipped", message=reason)
             return TaskExecutionResult(task_id, project, "skipped")
 
         if result.success:
             state.set_done(task_id, result.exit_code, result.log_file)
             dur = state.tasks[task_id].duration_s
             print(f"  ok    {task_id} ({dur}s)")
+            if event_logger:
+                event_logger.log("task_done", task_id=task_id, status="done",
+                                 message=f"Completed in {dur}s")
             return TaskExecutionResult(task_id, project, "done")
 
         error = result.stderr[:500] or "Unknown error"
@@ -149,11 +161,14 @@ def _execute_task(config: Config, state: RunState, task_id: str,
         print(f"  FAIL  {task_id}")
         print(f"        Log: {result.log_file}")
         notify_task_failed(config.settings, task_id, error)
+        if event_logger:
+            event_logger.log("task_failed", task_id=task_id, status="failed", message=error)
         return TaskExecutionResult(task_id, project, FAILED, error)
 
 
 def _coerce_future_result(future: Future, config: Config, state: RunState,
-                          task_id: str) -> TaskExecutionResult:
+                          task_id: str,
+                          event_logger: EventLogger | None = None) -> TaskExecutionResult:
     """Get result from a completed future, handling unexpected exceptions."""
     try:
         return future.result()
@@ -164,6 +179,8 @@ def _coerce_future_result(future: Future, config: Config, state: RunState,
         state.set_failed(task_id, error, log_file=None)
         print(f"  FAIL  {task_id} (worker exception)")
         notify_task_failed(config.settings, task_id, error)
+        if event_logger:
+            event_logger.log("task_failed", task_id=task_id, status="failed", message=error)
         return TaskExecutionResult(task_id, project, FAILED, error)
 
 
@@ -173,7 +190,8 @@ def _coerce_future_result(future: Future, config: Config, state: RunState,
 
 def run_pipeline(config: Config, scope: set[str] | None = None,
                  state: RunState | None = None,
-                 inherited_done: set[str] | None = None) -> RunState:
+                 inherited_done: set[str] | None = None,
+                 event_logger: EventLogger | None = None) -> RunState:
     """Execute tasks respecting DAG dependencies with bounded parallelism.
 
     Args:
@@ -182,6 +200,7 @@ def run_pipeline(config: Config, scope: set[str] | None = None,
         state: Pre-built RunState (used by retry). If None, a fresh one is created.
         inherited_done: Task IDs already done from a previous run (used by retry).
             These tasks are not executed but advance the DAG immediately.
+        event_logger: Optional EventLogger for recording run events.
     """
     inherited_done = inherited_done or set()
 
@@ -201,6 +220,12 @@ def run_pipeline(config: Config, scope: set[str] | None = None,
     if state is None:
         state = RunState(state_dir=config.settings.state_dir)
         state.init_tasks(scoped_order, config=config)
+
+    if event_logger is None:
+        event_logger = EventLogger(config.settings.state_dir, state.run_id)
+
+    if event_logger:
+        event_logger.log("run_started", message=f"Pipeline started ({len(scoped_order)} tasks)")
 
     inherited_count = len(inherited_done)
     pending_count = len(scoped_order) - inherited_count
@@ -228,6 +253,9 @@ def run_pipeline(config: Config, scope: set[str] | None = None,
                 # Inherited done: advance DAG without executing
                 if task_id in inherited_done:
                     print(f"  done  {task_id} (inherited)")
+                    if event_logger:
+                        event_logger.log("task_inherited", task_id=task_id, status="done",
+                                         message="Inherited from previous run")
                     dag.done(task_id)
                     continue
 
@@ -235,6 +263,9 @@ def run_pipeline(config: Config, scope: set[str] | None = None,
                 if reason:
                     state.set_skipped(task_id, reason)
                     print(f"  skip  {task_id} ({reason})")
+                    if event_logger:
+                        event_logger.log("task_skipped", task_id=task_id, status="skipped",
+                                         message=reason)
                     dag.done(task_id)
                 else:
                     submission_queue.append(task_id)
@@ -250,6 +281,7 @@ def run_pipeline(config: Config, scope: set[str] | None = None,
                 busy_projects.add(project)
                 future = executor.submit(
                     _execute_task, config, state, task_id, project_locks[project],
+                    event_logger,
                 )
                 running_futures[future] = task_id
 
@@ -261,7 +293,8 @@ def run_pipeline(config: Config, scope: set[str] | None = None,
                 done_futures, _ = wait(running_futures, return_when=FIRST_COMPLETED)
                 for future in done_futures:
                     task_id = running_futures.pop(future)
-                    result = _coerce_future_result(future, config, state, task_id)
+                    result = _coerce_future_result(future, config, state, task_id,
+                                                    event_logger)
                     busy_projects.discard(result.project)
                     dag.done(task_id)
             elif not submission_queue and not dag.is_active():
@@ -278,4 +311,12 @@ def run_pipeline(config: Config, scope: set[str] | None = None,
     print()
     print(state.summary())
     notify_pipeline_done(config.settings, state)
+
+    if event_logger:
+        counts: dict[str, int] = {}
+        for ts in state.tasks.values():
+            counts[ts.status] = counts.get(ts.status, 0) + 1
+        event_logger.log("run_finished", message="Pipeline finished",
+                         data={"counts": counts})
+
     return state
