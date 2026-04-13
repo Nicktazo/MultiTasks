@@ -101,6 +101,24 @@
   .btn-sm { padding: 3px 10px; font-size: 12px; }
   .btn-group { display: flex; gap: 6px; margin-left: auto; }
 
+  .help-icon { display:inline-flex; align-items:center; justify-content:center;
+    width:16px; height:16px; border-radius:50%; background:#ddd; color:#666;
+    font-size:11px; font-weight:700; cursor:help; margin-left:6px; position:relative;
+    vertical-align:middle; flex-shrink:0; outline:none; }
+  .help-icon:hover, .help-icon:focus { background:#3498db; color:#fff; }
+  .help-icon .help-tip { display:none; position:absolute; bottom:calc(100% + 6px);
+    left:50%; transform:translateX(-50%); width:220px; padding:8px 10px;
+    background:#333; color:#fff; font-size:12px; font-weight:400; border-radius:6px;
+    line-height:1.4; z-index:100; white-space:normal; pointer-events:none; }
+  .help-icon .help-tip::after { content:''; position:absolute; top:100%; left:50%;
+    transform:translateX(-50%); border:5px solid transparent; border-top-color:#333; }
+  .help-icon:hover .help-tip,
+  .help-icon:focus .help-tip,
+  .help-icon.show .help-tip { display:block; }
+
+  .lang-switcher { padding:4px 8px; border-radius:4px; border:1px solid #555;
+    background:#2a2a4a; color:#fff; font-size:13px; margin-left:auto; }
+
   .delete-btn { position: absolute; top: 8px; right: 10px; background: none; border: none;
                 color: #ccc; cursor: pointer; font-size: 16px; line-height: 1; }
   .delete-btn:hover { color: #e74c3c; }
@@ -162,7 +180,7 @@
 </head>
 <body>
 <div id="app">
-  <div class="empty" id="loading">Loading...</div>
+  <div class="empty" id="loading"></div>
 </div>
 
 <script>
@@ -171,6 +189,203 @@
 (function() {
   var app = document.getElementById('app');
   var currentTab = 'runs';
+  var lastKnownStatus = null;
+  var runsContainer = null;
+  var configContainer = null;
+
+  /* ====== i18n ====== */
+  var LANGS = {
+    en: {
+      title: 'MultiTasks Dashboard',
+      tab_runs: 'Runs', tab_config: 'Config',
+      btn_run_all: 'Run All', btn_retry_latest: 'Retry Latest',
+      btn_save_settings: 'Save Settings', btn_save: 'Save', btn_cancel: 'Cancel',
+      btn_add_project: '+ Add Project', btn_add_task: '+ Add Task',
+      btn_edit: 'Edit', btn_validate: 'Validate Config',
+      section_settings: 'Settings', section_projects: 'Projects', section_actions: 'Actions',
+      setting_max_parallel: 'Max Parallel', setting_timeout: 'Timeout (s)',
+      setting_notify: 'Notify', setting_dashboard_port: 'Dashboard Port',
+      setting_dirty_workspace: 'Dirty Workspace',
+      label_id: 'ID', label_prompt: 'Prompt', label_tool: 'Tool',
+      label_depends_on: 'Depends on', label_review_of: 'Review of',
+      label_project: 'Project', label_path: 'Path', label_task_id: 'Task ID',
+      status_done: 'DONE', status_failed: 'FAILED', status_skipped: 'SKIPPED',
+      status_running: 'RUNNING', status_pending: 'PENDING', status_idle: 'Idle',
+      status_running_since: 'Running ({mode}) since {time}',
+      status_done_run: 'Done \u2014 {id}', status_failed_error: 'Failed \u2014 {err}',
+      detail_duration: 'Duration: {s}s', detail_baseline: 'Baseline: {hash}',
+      detail_log: 'Log: {path}',
+      run_prefix: 'Run: {id}', no_tasks: 'No tasks in this run.',
+      event_timeline: 'Event Timeline', no_events: 'No event log for this run.',
+      loading: 'Loading...', loading_config: 'Loading config...',
+      validate_hint: 'Validates the last saved configuration.',
+      validate_ok: 'Config OK \u2014 {n} tasks, order: {order}',
+      validation_failed: 'Validation failed:',
+      error_prefix: 'Error:', config_load_failed: 'Failed to load config (HTTP {status}):',
+      config_error: 'Config error:',
+      error_loading_config: 'Error loading config: {err}',
+      error_generic: 'Error: {err}',
+      confirm_delete_project: 'Delete project "{name}" and all its tasks?',
+      confirm_delete_task: 'Delete task "{name}"?',
+      confirm_form_discard: 'Switching language will discard unsaved form edits. Continue?',
+      ph_task_id: 'task-id', ph_prompt: 'Prompt text...', ph_deps: 'e.g. t1, other:t2',
+      ph_deps_edit: 'e.g. t1, other_proj:t2', ph_review_of: 'e.g. t1',
+      ph_review_of_optional: 'review_of (optional)',
+      ph_project_name: 'project-name', ph_project_path: '/absolute/path/to/project',
+      ph_first_task_id: 'first-task-id', ph_first_prompt: 'First task prompt...',
+      title_delete_project: 'Delete project', title_delete_task: 'Delete task',
+      prefix_deps: 'deps: ', prefix_review_of: 'review_of: ',
+      help_max_parallel: 'Max concurrent tasks across all projects',
+      help_timeout: 'Seconds before a task is killed. 0 = no limit',
+      help_notify: 'Notification channel on run completion',
+      help_dashboard_port: 'HTTP port, takes effect on restart',
+      help_dirty_workspace: 'warn/block/ignore uncommitted changes',
+      help_project_name: 'Unique project identifier, used as task ID prefix',
+      help_project_path: 'Absolute path to project, must be a git repo',
+      help_task_id: 'Unique ID within project, referenced by other tasks',
+      help_prompt: 'Instruction text sent to the AI tool',
+      help_tool: 'AI tool used to execute this task',
+      help_depends_on: 'Comma-separated prerequisite task IDs',
+      help_review_of: 'Task ID being reviewed, creates implicit dependency',
+      help_validate: 'Check config validity and show execution order',
+      help_run_all: 'Run all tasks in dependency order',
+      help_retry_latest: 'Re-run only failed/skipped tasks from latest run'
+    },
+    zh: {
+      title: 'MultiTasks \u63a7\u5236\u53f0',
+      tab_runs: '\u8fd0\u884c', tab_config: '\u914d\u7f6e',
+      btn_run_all: '\u5168\u90e8\u8fd0\u884c', btn_retry_latest: '\u91cd\u8bd5\u6700\u8fd1',
+      btn_save_settings: '\u4fdd\u5b58\u8bbe\u7f6e', btn_save: '\u4fdd\u5b58', btn_cancel: '\u53d6\u6d88',
+      btn_add_project: '+ \u6dfb\u52a0\u9879\u76ee', btn_add_task: '+ \u6dfb\u52a0\u4efb\u52a1',
+      btn_edit: '\u7f16\u8f91', btn_validate: '\u9a8c\u8bc1\u914d\u7f6e',
+      section_settings: '\u8bbe\u7f6e', section_projects: '\u9879\u76ee', section_actions: '\u64cd\u4f5c',
+      setting_max_parallel: '\u6700\u5927\u5e76\u884c\u6570', setting_timeout: '\u8d85\u65f6 (\u79d2)',
+      setting_notify: '\u901a\u77e5', setting_dashboard_port: '\u9762\u677f\u7aef\u53e3',
+      setting_dirty_workspace: '\u810f\u5de5\u4f5c\u533a',
+      label_id: 'ID', label_prompt: '\u6307\u4ee4', label_tool: '\u5de5\u5177',
+      label_depends_on: '\u4f9d\u8d56', label_review_of: 'Review \u5bf9\u8c61',
+      label_project: '\u9879\u76ee', label_path: '\u8def\u5f84', label_task_id: '\u4efb\u52a1 ID',
+      status_done: '\u5df2\u5b8c\u6210', status_failed: '\u5931\u8d25', status_skipped: '\u8df3\u8fc7',
+      status_running: '\u8fd0\u884c\u4e2d', status_pending: '\u7b49\u5f85\u4e2d', status_idle: '\u7a7a\u95f2',
+      status_running_since: '\u8fd0\u884c\u4e2d ({mode}) \u81ea {time}',
+      status_done_run: '\u5b8c\u6210 \u2014 {id}', status_failed_error: '\u5931\u8d25 \u2014 {err}',
+      detail_duration: '\u65f6\u957f: {s}\u79d2', detail_baseline: '\u57fa\u7ebf: {hash}',
+      detail_log: '\u65e5\u5fd7: {path}',
+      run_prefix: '\u8fd0\u884c: {id}', no_tasks: '\u672c\u6b21\u8fd0\u884c\u65e0\u4efb\u52a1\u3002',
+      event_timeline: '\u4e8b\u4ef6\u65f6\u95f4\u7ebf', no_events: '\u672c\u6b21\u8fd0\u884c\u65e0\u4e8b\u4ef6\u65e5\u5fd7\u3002',
+      loading: '\u52a0\u8f7d\u4e2d...', loading_config: '\u52a0\u8f7d\u914d\u7f6e\u4e2d...',
+      validate_hint: '\u9a8c\u8bc1\u4e0a\u6b21\u4fdd\u5b58\u7684\u914d\u7f6e\u3002',
+      validate_ok: '\u914d\u7f6e\u6b63\u5e38 \u2014 {n} \u4e2a\u4efb\u52a1\uff0c\u987a\u5e8f: {order}',
+      validation_failed: '\u9a8c\u8bc1\u5931\u8d25:',
+      error_prefix: '\u9519\u8bef:', config_load_failed: '\u52a0\u8f7d\u914d\u7f6e\u5931\u8d25 (HTTP {status}):',
+      config_error: '\u914d\u7f6e\u9519\u8bef:',
+      error_loading_config: '\u52a0\u8f7d\u914d\u7f6e\u51fa\u9519: {err}',
+      error_generic: '\u9519\u8bef: {err}',
+      confirm_delete_project: '\u5220\u9664\u9879\u76ee "{name}" \u53ca\u5176\u6240\u6709\u4efb\u52a1\uff1f',
+      confirm_delete_task: '\u5220\u9664\u4efb\u52a1 "{name}"\uff1f',
+      confirm_form_discard: '\u5207\u6362\u8bed\u8a00\u5c06\u4e22\u5931\u672a\u4fdd\u5b58\u7684\u8868\u5355\u7f16\u8f91\u3002\u7ee7\u7eed\uff1f',
+      ph_task_id: '\u4efb\u52a1ID', ph_prompt: '\u6307\u4ee4\u6587\u672c...', ph_deps: '\u5982 t1, other:t2',
+      ph_deps_edit: '\u5982 t1, other_proj:t2', ph_review_of: '\u5982 t1',
+      ph_review_of_optional: 'review_of (\u53ef\u9009)',
+      ph_project_name: '\u9879\u76ee\u540d\u79f0', ph_project_path: '/\u7edd\u5bf9\u8def\u5f84/\u5230/\u9879\u76ee',
+      ph_first_task_id: '\u9996\u4e2a\u4efb\u52a1ID', ph_first_prompt: '\u9996\u4e2a\u4efb\u52a1\u6307\u4ee4...',
+      title_delete_project: '\u5220\u9664\u9879\u76ee', title_delete_task: '\u5220\u9664\u4efb\u52a1',
+      prefix_deps: '\u4f9d\u8d56: ', prefix_review_of: 'review_of: ',
+      help_max_parallel: '\u6700\u591a\u540c\u65f6\u8fd0\u884c\u7684\u4efb\u52a1\u6570',
+      help_timeout: '\u4efb\u52a1\u8d85\u65f6\u79d2\u6570\uff0c0=\u65e0\u9650\u5236',
+      help_notify: '\u8fd0\u884c\u7ed3\u675f\u901a\u77e5\u6e20\u9053',
+      help_dashboard_port: 'Dashboard HTTP\u7aef\u53e3\uff0c\u91cd\u542f\u751f\u6548',
+      help_dirty_workspace: 'warn=\u8b66\u544a, block=\u4e2d\u6b62, ignore=\u5ffd\u7565',
+      help_project_name: '\u9879\u76ee\u552f\u4e00\u6807\u8bc6\uff0c\u7528\u4f5c\u4efb\u52a1ID\u524d\u7f00',
+      help_project_path: '\u9879\u76ee\u7edd\u5bf9\u8def\u5f84\uff0c\u5fc5\u987b\u662fgit\u4ed3\u5e93',
+      help_task_id: '\u9879\u76ee\u5185\u552f\u4e00ID\uff0c\u88ab\u5176\u4ed6\u4efb\u52a1\u4f9d\u8d56\u5f15\u7528',
+      help_prompt: '\u53d1\u9001\u7ed9AI\u5de5\u5177\u7684\u6307\u4ee4\u6587\u672c',
+      help_tool: '\u6267\u884c\u4efb\u52a1\u7684AI\u5de5\u5177',
+      help_depends_on: '\u9017\u53f7\u5206\u9694\u7684\u524d\u7f6e\u4efb\u52a1ID',
+      help_review_of: '\u88abreview\u7684\u4efb\u52a1ID\uff0c\u521b\u5efa\u9690\u5f0f\u4f9d\u8d56',
+      help_validate: '\u68c0\u67e5\u914d\u7f6e\u5408\u6cd5\u6027\u5e76\u663e\u793a\u6267\u884c\u987a\u5e8f',
+      help_run_all: '\u6309\u4f9d\u8d56\u987a\u5e8f\u8fd0\u884c\u6240\u6709\u4efb\u52a1',
+      help_retry_latest: '\u4ec5\u91cd\u8dd1\u6700\u8fd1\u4e00\u6b21\u5931\u8d25/\u8df3\u8fc7\u7684\u4efb\u52a1'
+    }
+  };
+
+  var currentLang = localStorage.getItem('mt-lang') || 'en';
+  var loadingEl = document.getElementById('loading');
+  if (loadingEl) loadingEl.textContent = LANGS[currentLang].loading || 'Loading...';
+
+  function t(key, params) {
+    var str = (LANGS[currentLang] && LANGS[currentLang][key]) || LANGS.en[key] || key;
+    if (params) {
+      Object.keys(params).forEach(function(k) {
+        str = str.replace('{' + k + '}', params[k]);
+      });
+    }
+    return str;
+  }
+
+  function helpIcon(helpKey) {
+    var icon = el('span', {className: 'help-icon', tabindex: '0'}, [
+      '?',
+      el('span', {className: 'help-tip', textContent: t(helpKey)})
+    ]);
+    icon.addEventListener('click', function(e) {
+      e.stopPropagation();
+      icon.classList.toggle('show');
+    });
+    return icon;
+  }
+
+  function applyLanguage(newLang) {
+    var prevLang = currentLang;
+    /* Check for open config forms before committing */
+    if (newLang !== prevLang && currentTab === 'config' && configContainer) {
+      var hasOpenForm = configContainer.querySelector('.inline-form');
+      if (hasOpenForm && !confirm(t('confirm_form_discard'))) {
+        /* Revert switcher to previous language */
+        var sw = document.querySelector('.lang-switcher');
+        if (sw) sw.value = prevLang;
+        return;
+      }
+    }
+    currentLang = newLang;
+    localStorage.setItem('mt-lang', currentLang);
+    document.title = t('title');
+    document.documentElement.lang = currentLang;
+    /* Re-render header to update title + switcher */
+    var header = document.querySelector('.header');
+    if (header) {
+      clearEl(header);
+      header.appendChild(el('h1', {textContent: t('title')}));
+      var sel = el('select', {className: 'lang-switcher', onchange: function() {
+        applyLanguage(this.value);
+      }});
+      var enOpt = el('option', {value: 'en', textContent: 'EN'});
+      var zhOpt = el('option', {value: 'zh', textContent: '\u4e2d\u6587'});
+      if (currentLang === 'zh') zhOpt.selected = true;
+      else enOpt.selected = true;
+      sel.appendChild(enOpt);
+      sel.appendChild(zhOpt);
+      header.appendChild(sel);
+    }
+    /* Re-render tab buttons */
+    var tabBtns = document.querySelectorAll('.tab-btn');
+    if (tabBtns.length >= 2) {
+      tabBtns[0].textContent = t('tab_runs');
+      tabBtns[1].textContent = t('tab_config');
+    }
+    /* Re-render active tab content */
+    if (currentTab === 'runs' && runsContainer) {
+      loadRunsTab(runsContainer, selectedRunId);
+    } else if (currentTab === 'config' && configContainer) {
+      loadConfigTab(configContainer);
+    }
+  }
+
+  /* Close open help tooltips on outside click */
+  document.addEventListener('click', function() {
+    var open = document.querySelectorAll('.help-icon.show');
+    for (var i = 0; i < open.length; i++) open[i].classList.remove('show');
+  });
 
   function el(tag, attrs, children) {
     var e = document.createElement(tag);
@@ -195,25 +410,40 @@
   function renderShell() {
     clearEl(app);
 
+    var langSel = el('select', {className: 'lang-switcher', onchange: function() {
+      applyLanguage(this.value);
+    }});
+    var enOpt = el('option', {value: 'en', textContent: 'EN'});
+    var zhOpt = el('option', {value: 'zh', textContent: '\u4e2d\u6587'});
+    if (currentLang === 'zh') zhOpt.selected = true;
+    else enOpt.selected = true;
+    langSel.appendChild(enOpt);
+    langSel.appendChild(zhOpt);
+
     var header = el('div', {className: 'header'}, [
-      el('h1', {textContent: 'MultiTasks Dashboard'})
+      el('h1', {textContent: t('title')}),
+      langSel
     ]);
     app.appendChild(header);
+    document.title = t('title');
+    document.documentElement.lang = currentLang;
 
     var tabs = el('div', {className: 'tabs'}, [
       el('button', {className: 'tab-btn' + (currentTab === 'runs' ? ' active' : ''),
-                    textContent: 'Runs', onclick: function() { switchTab('runs'); }}),
+                    textContent: t('tab_runs'), onclick: function() { switchTab('runs'); }}),
       el('button', {className: 'tab-btn' + (currentTab === 'config' ? ' active' : ''),
-                    textContent: 'Config', onclick: function() { switchTab('config'); }})
+                    textContent: t('tab_config'), onclick: function() { switchTab('config'); }})
     ]);
     app.appendChild(tabs);
 
     var runsTab = el('div', {id: 'tab-runs', className: 'tab-content' + (currentTab === 'runs' ? ' active' : '')});
-    var configTab = el('div', {id: 'tab-config', className: 'tab-content' + (currentTab === 'config' ? ' active' : '')});
+    var cfgTab = el('div', {id: 'tab-config', className: 'tab-content' + (currentTab === 'config' ? ' active' : '')});
     app.appendChild(runsTab);
-    app.appendChild(configTab);
+    app.appendChild(cfgTab);
+    runsContainer = runsTab;
+    configContainer = cfgTab;
 
-    return {runs: runsTab, config: configTab};
+    return {runs: runsTab, config: cfgTab};
   }
 
   function switchTab(tab) {
@@ -286,20 +516,23 @@
   }
 
   function updateStatusBar(st) {
+    lastKnownStatus = st;
     var bar = document.getElementById('run-status-bar');
     if (!bar) return;
     clearEl(bar);
     var dot = el('span', {className: 'dot dot-' + st.status});
-    var text = st.status.charAt(0).toUpperCase() + st.status.slice(1);
+    var text;
     if (st.status === 'running' && st.started_at) {
-      var t = st.started_at.split('T')[1];
-      if (t) text += ' (' + st.mode + ') since ' + t.substring(0, 8);
-    }
-    if (st.status === 'done' && st.run_id) {
-      text += ' — ' + st.run_id;
-    }
-    if (st.status === 'failed' && st.error) {
-      text += ' — ' + st.error.substring(0, 80);
+      var timeStr = st.started_at.split('T')[1];
+      text = timeStr ? t('status_running_since', {mode: st.mode, time: timeStr.substring(0, 8)}) : t('status_running');
+    } else if (st.status === 'done' && st.run_id) {
+      text = t('status_done_run', {id: st.run_id});
+    } else if (st.status === 'failed' && st.error) {
+      text = t('status_failed_error', {err: st.error.substring(0, 80)});
+    } else if (st.status === 'idle' || !st.status) {
+      text = t('status_idle');
+    } else {
+      text = t('status_' + st.status);
     }
     bar.appendChild(dot);
     bar.appendChild(document.createTextNode(text));
@@ -346,13 +579,15 @@
 
     // Run controls bar
     var controls = el('div', {className: 'run-controls'}, [
-      el('button', {className: 'btn btn-primary', textContent: 'Run All',
+      el('button', {className: 'btn btn-primary', textContent: t('btn_run_all'),
+        title: t('help_run_all'),
         onclick: function() { triggerRun('run', content); }}),
-      el('button', {className: 'btn btn-secondary', textContent: 'Retry Latest',
+      el('button', {className: 'btn btn-secondary', textContent: t('btn_retry_latest'),
+        title: t('help_retry_latest'),
         onclick: function() { triggerRun('retry', content); }}),
       el('div', {className: 'run-status-bar', id: 'run-status-bar'}, [
         el('span', {className: 'dot dot-idle'}),
-        document.createTextNode('Idle')
+        document.createTextNode(t('status_idle'))
       ])
     ]);
     container.appendChild(controls);
@@ -387,7 +622,7 @@
       renderRunState(container, detail.run, runs, detail.events);
     }).catch(function(err) {
       clearEl(container);
-      container.appendChild(el('div', {className: 'empty', textContent: 'Error: ' + String(err)}));
+      container.appendChild(el('div', {className: 'empty', textContent: t('error_generic', {err: String(err)})}));
     });
   }
 
@@ -398,17 +633,16 @@
     var byProject = {};
 
     Object.keys(tasks).forEach(function(tid) {
-      var t = tasks[tid];
-      var st = t.status || 'pending';
+      var tk = tasks[tid];
+      var st = tk.status || 'pending';
       counts[st] = (counts[st] || 0) + 1;
       var proj = tid.split(':')[0] || 'unknown';
       if (!byProject[proj]) byProject[proj] = [];
-      byProject[proj].push(t);
+      byProject[proj].push(tk);
     });
 
     /* Run selector + meta */
     var selectEl = el('select', {id: 'run-select', onchange: function() {
-      // First option = latest run; selecting it clears the pin
       var idx = this.selectedIndex;
       selectedRunId = (idx === 0) ? null : this.value;
       loadRunsContent(container, this.value);
@@ -420,7 +654,7 @@
 
     var metaRow = el('div', {className: 'stats'}, [
       el('div', {style: 'display:flex;align-items:center;gap:12px;flex:1'}, [
-        el('span', {textContent: 'Run: ' + (data.run_id || ''), style: 'font-weight:600;font-size:14px'}),
+        el('span', {textContent: t('run_prefix', {id: data.run_id || ''}), style: 'font-weight:600;font-size:14px'}),
         el('span', {textContent: data.created_at || '', style: 'font-size:12px;color:#888'}),
         selectEl
       ])
@@ -432,7 +666,7 @@
       ['done','failed','skipped','running','pending'].map(function(s) {
         return el('div', {className: 'stat-card'}, [
           el('div', {className: 'num status-' + s, textContent: String(counts[s])}),
-          el('div', {className: 'label', textContent: s})
+          el('div', {className: 'label', textContent: t('status_' + s)})
         ]);
       })
     );
@@ -442,22 +676,22 @@
     var projectsDiv = el('div', {className: 'projects'});
     var projectNames = Object.keys(byProject).sort();
     if (projectNames.length === 0) {
-      projectsDiv.appendChild(el('div', {className: 'empty', textContent: 'No tasks in this run.'}));
+      projectsDiv.appendChild(el('div', {className: 'empty', textContent: t('no_tasks')}));
     }
     projectNames.forEach(function(proj) {
       var group = el('div', {className: 'project-group'}, [el('h2', {textContent: proj})]);
-      byProject[proj].forEach(function(t) {
-        var st = t.status || 'pending';
+      byProject[proj].forEach(function(tk) {
+        var st = tk.status || 'pending';
         var card = el('div', {className: 'task-card ' + st}, [
-          el('div', {className: 'task-id', textContent: t.task_id}),
-          el('div', {className: 'task-status status-' + st, textContent: st.toUpperCase()})
+          el('div', {className: 'task-id', textContent: tk.task_id}),
+          el('div', {className: 'task-status status-' + st, textContent: t('status_' + st)})
         ]);
         var details = el('div', {className: 'task-details'});
-        if (t.duration_s != null) details.appendChild(el('span', {textContent: 'Duration: ' + t.duration_s + 's'}));
-        if (t.git_baseline) details.appendChild(el('span', {textContent: 'Baseline: ' + t.git_baseline.substring(0, 8)}));
-        if (t.log_file) details.appendChild(el('span', {textContent: 'Log: ' + t.log_file}));
+        if (tk.duration_s != null) details.appendChild(el('span', {textContent: t('detail_duration', {s: tk.duration_s})}));
+        if (tk.git_baseline) details.appendChild(el('span', {textContent: t('detail_baseline', {hash: tk.git_baseline.substring(0, 8)})}));
+        if (tk.log_file) details.appendChild(el('span', {textContent: t('detail_log', {path: tk.log_file})}));
         card.appendChild(details);
-        if (t.error) card.appendChild(el('div', {className: 'error', textContent: t.error}));
+        if (tk.error) card.appendChild(el('div', {className: 'error', textContent: tk.error}));
         group.appendChild(card);
       });
       projectsDiv.appendChild(group);
@@ -466,10 +700,10 @@
 
     /* Event timeline */
     var timelineDiv = el('div', {className: 'event-timeline'}, [
-      el('h3', {textContent: 'Event Timeline'})
+      el('h3', {textContent: t('event_timeline')})
     ]);
     if (!events || events.length === 0) {
-      timelineDiv.appendChild(el('div', {className: 'no-events', textContent: 'No event log for this run.'}));
+      timelineDiv.appendChild(el('div', {className: 'no-events', textContent: t('no_events')}));
     } else {
       events.forEach(function(ev) {
         var ts = (ev.ts || '').split('T')[1] || ev.ts || '';
@@ -492,13 +726,13 @@
 
   function loadConfigTab(container) {
     clearEl(container);
-    container.appendChild(el('div', {className: 'empty', textContent: 'Loading config...'}));
+    container.appendChild(el('div', {className: 'empty', textContent: t('loading_config')}));
     fetch('/api/config').then(function(r) {
       if (!r.ok) {
         return r.json().then(function(data) {
           clearEl(container);
           var errDiv = el('div', {className: 'error-banner'});
-          errDiv.appendChild(el('strong', {textContent: 'Failed to load config (HTTP ' + r.status + '):'}));
+          errDiv.appendChild(el('strong', {textContent: t('config_load_failed', {status: r.status})}));
           errDiv.appendChild(el('p', {textContent: data.error || 'Unknown server error'}));
           container.appendChild(errDiv);
         });
@@ -507,7 +741,7 @@
         if (data.error) {
           clearEl(container);
           var errDiv = el('div', {className: 'error-banner'});
-          errDiv.appendChild(el('strong', {textContent: 'Config error:'}));
+          errDiv.appendChild(el('strong', {textContent: t('config_error')}));
           errDiv.appendChild(el('p', {textContent: data.error}));
           container.appendChild(errDiv);
           return;
@@ -517,7 +751,7 @@
       });
     }).catch(function(err) {
       clearEl(container);
-      container.appendChild(el('div', {className: 'empty', textContent: 'Error loading config: ' + err}));
+      container.appendChild(el('div', {className: 'empty', textContent: t('error_loading_config', {err: err})}));
     });
   }
 
@@ -532,23 +766,23 @@
 
     /* Settings section */
     var settingsSection = el('div', {className: 'config-section'}, [
-      el('h3', {textContent: 'Settings'})
+      el('h3', {textContent: t('section_settings')})
     ]);
     var settings = data.settings || {};
     var grid = el('div', {className: 'settings-grid'});
 
     var settingsFields = [
-      {key: 'max_parallel', label: 'Max Parallel', type: 'number'},
-      {key: 'timeout', label: 'Timeout (s)', type: 'number'},
-      {key: 'notify', label: 'Notify', type: 'select', options: ['none', 'whatsapp', 'telegram']},
-      {key: 'dashboard_port', label: 'Dashboard Port', type: 'number'},
-      {key: 'dirty_workspace', label: 'Dirty Workspace', type: 'select', options: ['warn', 'block', 'ignore']},
+      {key: 'max_parallel', labelKey: 'setting_max_parallel', helpKey: 'help_max_parallel', type: 'number'},
+      {key: 'timeout', labelKey: 'setting_timeout', helpKey: 'help_timeout', type: 'number'},
+      {key: 'notify', labelKey: 'setting_notify', helpKey: 'help_notify', type: 'select', options: ['none', 'whatsapp', 'telegram']},
+      {key: 'dashboard_port', labelKey: 'setting_dashboard_port', helpKey: 'help_dashboard_port', type: 'number'},
+      {key: 'dirty_workspace', labelKey: 'setting_dirty_workspace', helpKey: 'help_dirty_workspace', type: 'select', options: ['warn', 'block', 'ignore']},
     ];
 
     var settingsInputs = {};
     settingsFields.forEach(function(f) {
       var group = el('div');
-      group.appendChild(el('label', {textContent: f.label}));
+      group.appendChild(el('label', {}, [t(f.labelKey), helpIcon(f.helpKey)]));
       if (f.type === 'select') {
         var sel = el('select', {id: 'setting-' + f.key});
         f.options.forEach(function(o) {
@@ -567,7 +801,7 @@
     });
 
     settingsSection.appendChild(grid);
-    settingsSection.appendChild(el('button', {className: 'btn btn-primary', textContent: 'Save Settings',
+    settingsSection.appendChild(el('button', {className: 'btn btn-primary', textContent: t('btn_save_settings'),
       onclick: function() {
         var payload = {};
         settingsFields.forEach(function(f) {
@@ -582,7 +816,7 @@
 
     /* Projects section */
     var projSection = el('div', {className: 'config-section'}, [
-      el('h3', {textContent: 'Projects'})
+      el('h3', {textContent: t('section_projects')})
     ]);
     var projects = data.projects || {};
     Object.keys(projects).forEach(function(projName) {
@@ -591,7 +825,7 @@
 
     /* Add Project button */
     var addProjArea = el('div', {id: 'add-project-area', style: 'margin-top:12px'});
-    addProjArea.appendChild(el('button', {className: 'btn btn-secondary', textContent: '+ Add Project',
+    addProjArea.appendChild(el('button', {className: 'btn btn-secondary', textContent: t('btn_add_project'),
       onclick: function() { showAddProjectForm(addProjArea, container); }
     }));
     projSection.appendChild(addProjArea);
@@ -599,10 +833,11 @@
 
     /* Actions section */
     var actionsSection = el('div', {className: 'config-section'}, [
-      el('h3', {textContent: 'Actions'})
+      el('h3', {textContent: t('section_actions')})
     ]);
     var validateResult = el('div', {id: 'validate-result'});
-    actionsSection.appendChild(el('button', {className: 'btn btn-primary', textContent: 'Validate Config',
+    actionsSection.appendChild(el('button', {className: 'btn btn-primary', textContent: t('btn_validate'),
+      title: t('help_validate'),
       onclick: function() {
         fetch('/api/validate', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'})
           .then(function(r) { return r.json(); })
@@ -611,10 +846,10 @@
             if (res.ok) {
               validateResult.appendChild(el('div', {className: 'success-banner',
                 style: 'margin:8px 0',
-                textContent: 'Config OK \u2014 ' + res.order.length + ' tasks, order: ' + res.order.join(' \u2192 ')}));
+                textContent: t('validate_ok', {n: res.order.length, order: res.order.join(' \u2192 ')})}));
             } else {
               var errDiv = el('div', {className: 'error-banner', style: 'margin:8px 0'});
-              errDiv.appendChild(el('strong', {textContent: 'Validation failed:'}));
+              errDiv.appendChild(el('strong', {textContent: t('validation_failed')}));
               var ul = el('ul');
               res.errors.forEach(function(e) { ul.appendChild(el('li', {textContent: e})); });
               errDiv.appendChild(ul);
@@ -624,7 +859,7 @@
       }
     }));
     actionsSection.appendChild(el('div', {style: 'font-size:12px;color:#888;margin-top:4px',
-      textContent: 'Validates the last saved configuration.'}));
+      textContent: t('validate_hint')}));
     actionsSection.appendChild(validateResult);
     container.appendChild(actionsSection);
   }
@@ -638,10 +873,10 @@
       arrow,
       el('span', {className: 'proj-name', textContent: projName}),
       el('span', {className: 'proj-path', textContent: projData.path || ''}),
-      el('button', {className: 'proj-delete-btn', textContent: '\u00D7', title: 'Delete project',
+      el('button', {className: 'proj-delete-btn', textContent: '\u00D7', title: t('title_delete_project'),
         onclick: function(e) {
           e.stopPropagation();
-          if (!confirm('Delete project "' + projName + '" and all its tasks?')) return;
+          if (!confirm(t('confirm_delete_project', {name: projName}))) return;
           postConfig('/api/config/projects/delete', {name: projName}, tabContainer);
         }
       })
@@ -661,7 +896,7 @@
 
     /* Add Task button */
     var addTaskArea = el('div', {id: 'add-task-' + projName, style: 'margin:6px 0 6px 20px'});
-    addTaskArea.appendChild(el('button', {className: 'btn btn-secondary btn-sm', textContent: '+ Add Task',
+    addTaskArea.appendChild(el('button', {className: 'btn btn-secondary btn-sm', textContent: t('btn_add_task'),
       onclick: function() { showAddTaskForm(projName, addTaskArea, tabContainer); }
     }));
     body.appendChild(addTaskArea);
@@ -676,25 +911,25 @@
       el('span', {className: 'cfg-task-tool', textContent: task.tool || ''}),
     ]);
     if (task.depends_on && task.depends_on.length > 0) {
-      headerRow.appendChild(el('span', {className: 'cfg-task-deps', textContent: 'deps: ' + task.depends_on.join(', ')}));
+      headerRow.appendChild(el('span', {className: 'cfg-task-deps', textContent: t('prefix_deps') + task.depends_on.join(', ')}));
     }
     if (task.review_of) {
-      headerRow.appendChild(el('span', {className: 'cfg-task-deps', textContent: 'review_of: ' + task.review_of}));
+      headerRow.appendChild(el('span', {className: 'cfg-task-deps', textContent: t('prefix_review_of') + task.review_of}));
     }
     card.appendChild(headerRow);
     card.appendChild(el('div', {className: 'cfg-task-prompt', textContent: task.prompt || ''}));
 
     /* Edit button */
     var btnGroup = el('div', {className: 'btn-group', style: 'margin-top:6px'});
-    btnGroup.appendChild(el('button', {className: 'btn btn-secondary btn-sm', textContent: 'Edit',
+    btnGroup.appendChild(el('button', {className: 'btn btn-secondary btn-sm', textContent: t('btn_edit'),
       onclick: function() { showEditTaskForm(projName, task, card, tabContainer); }
     }));
     card.appendChild(btnGroup);
 
     /* Delete button */
-    card.appendChild(el('button', {className: 'delete-btn', textContent: '\u00D7', title: 'Delete task',
+    card.appendChild(el('button', {className: 'delete-btn', textContent: '\u00D7', title: t('title_delete_task'),
       onclick: function() {
-        if (!confirm('Delete task "' + task.id + '"?')) return;
+        if (!confirm(t('confirm_delete_task', {name: task.id}))) return;
         postConfig('/api/config/tasks/delete', {project: projName, id: task.id}, tabContainer);
       }
     }));
@@ -707,30 +942,30 @@
     var form = el('div', {className: 'inline-form'});
     var promptInput = el('textarea', {value: task.prompt || ''});
     var toolSelect = el('select');
-    ['claude', 'codex', 'codex-review'].forEach(function(t) {
-      var opt = el('option', {value: t, textContent: t});
-      if (t === task.tool) opt.selected = true;
+    ['claude', 'codex', 'codex-review'].forEach(function(toolOpt) {
+      var opt = el('option', {value: toolOpt, textContent: toolOpt});
+      if (toolOpt === task.tool) opt.selected = true;
       toolSelect.appendChild(opt);
     });
     var depsInput = el('input', {type: 'text', value: (task.depends_on || []).join(', '),
-                                  placeholder: 'e.g. t1, other_proj:t2'});
+                                  placeholder: t('ph_deps_edit')});
     var reviewInput = el('input', {type: 'text', value: task.review_of || '',
-                                    placeholder: 'e.g. t1'});
+                                    placeholder: t('ph_review_of')});
 
     form.appendChild(el('div', {className: 'form-row'}, [
-      el('label', {textContent: 'Prompt'}), promptInput
+      el('label', {}, [t('label_prompt'), helpIcon('help_prompt')]), promptInput
     ]));
     form.appendChild(el('div', {className: 'form-row'}, [
-      el('label', {textContent: 'Tool'}), toolSelect
+      el('label', {}, [t('label_tool'), helpIcon('help_tool')]), toolSelect
     ]));
     form.appendChild(el('div', {className: 'form-row'}, [
-      el('label', {textContent: 'Depends on'}), depsInput
+      el('label', {}, [t('label_depends_on'), helpIcon('help_depends_on')]), depsInput
     ]));
     form.appendChild(el('div', {className: 'form-row'}, [
-      el('label', {textContent: 'Review of'}), reviewInput
+      el('label', {}, [t('label_review_of'), helpIcon('help_review_of')]), reviewInput
     ]));
     form.appendChild(el('div', {className: 'form-row'}, [
-      el('button', {className: 'btn btn-primary btn-sm', textContent: 'Save',
+      el('button', {className: 'btn btn-primary btn-sm', textContent: t('btn_save'),
         onclick: function() {
           var deps = depsInput.value.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
           postConfig('/api/config/tasks', {
@@ -740,7 +975,7 @@
           }, tabContainer);
         }
       }),
-      el('button', {className: 'btn btn-secondary btn-sm', textContent: 'Cancel',
+      el('button', {className: 'btn btn-secondary btn-sm', textContent: t('btn_cancel'),
         onclick: function() { form.parentNode.replaceChild(renderTaskCard(projName, task, tabContainer), form); }
       })
     ]));
@@ -751,22 +986,22 @@
   function showAddTaskForm(projName, area, tabContainer) {
     clearEl(area);
     var form = el('div', {className: 'inline-form'});
-    var idInput = el('input', {type: 'text', placeholder: 'task-id'});
-    var promptInput = el('textarea', {placeholder: 'Prompt text...'});
+    var idInput = el('input', {type: 'text', placeholder: t('ph_task_id')});
+    var promptInput = el('textarea', {placeholder: t('ph_prompt')});
     var toolSelect = el('select');
-    ['claude', 'codex', 'codex-review'].forEach(function(t) {
-      toolSelect.appendChild(el('option', {value: t, textContent: t}));
+    ['claude', 'codex', 'codex-review'].forEach(function(toolOpt) {
+      toolSelect.appendChild(el('option', {value: toolOpt, textContent: toolOpt}));
     });
-    var depsInput = el('input', {type: 'text', placeholder: 'e.g. t1, other:t2'});
-    var reviewInput = el('input', {type: 'text', placeholder: 'review_of (optional)'});
+    var depsInput = el('input', {type: 'text', placeholder: t('ph_deps')});
+    var reviewInput = el('input', {type: 'text', placeholder: t('ph_review_of_optional')});
 
-    form.appendChild(el('div', {className: 'form-row'}, [el('label', {textContent: 'ID'}), idInput]));
-    form.appendChild(el('div', {className: 'form-row'}, [el('label', {textContent: 'Prompt'}), promptInput]));
-    form.appendChild(el('div', {className: 'form-row'}, [el('label', {textContent: 'Tool'}), toolSelect]));
-    form.appendChild(el('div', {className: 'form-row'}, [el('label', {textContent: 'Depends on'}), depsInput]));
-    form.appendChild(el('div', {className: 'form-row'}, [el('label', {textContent: 'Review of'}), reviewInput]));
+    form.appendChild(el('div', {className: 'form-row'}, [el('label', {}, [t('label_id'), helpIcon('help_task_id')]), idInput]));
+    form.appendChild(el('div', {className: 'form-row'}, [el('label', {}, [t('label_prompt'), helpIcon('help_prompt')]), promptInput]));
+    form.appendChild(el('div', {className: 'form-row'}, [el('label', {}, [t('label_tool'), helpIcon('help_tool')]), toolSelect]));
+    form.appendChild(el('div', {className: 'form-row'}, [el('label', {}, [t('label_depends_on'), helpIcon('help_depends_on')]), depsInput]));
+    form.appendChild(el('div', {className: 'form-row'}, [el('label', {}, [t('label_review_of'), helpIcon('help_review_of')]), reviewInput]));
     form.appendChild(el('div', {className: 'form-row'}, [
-      el('button', {className: 'btn btn-primary btn-sm', textContent: 'Save',
+      el('button', {className: 'btn btn-primary btn-sm', textContent: t('btn_save'),
         onclick: function() {
           var deps = depsInput.value.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
           postConfig('/api/config/tasks', {
@@ -776,10 +1011,10 @@
           }, tabContainer);
         }
       }),
-      el('button', {className: 'btn btn-secondary btn-sm', textContent: 'Cancel',
+      el('button', {className: 'btn btn-secondary btn-sm', textContent: t('btn_cancel'),
         onclick: function() {
           clearEl(area);
-          area.appendChild(el('button', {className: 'btn btn-secondary btn-sm', textContent: '+ Add Task',
+          area.appendChild(el('button', {className: 'btn btn-secondary btn-sm', textContent: t('btn_add_task'),
             onclick: function() { showAddTaskForm(projName, area, tabContainer); }
           }));
         }
@@ -791,22 +1026,22 @@
   function showAddProjectForm(area, tabContainer) {
     clearEl(area);
     var form = el('div', {className: 'inline-form'});
-    var nameInput = el('input', {type: 'text', placeholder: 'project-name'});
-    var pathInput = el('input', {type: 'text', placeholder: '/absolute/path/to/project'});
-    var taskIdInput = el('input', {type: 'text', placeholder: 'first-task-id'});
-    var promptInput = el('textarea', {placeholder: 'First task prompt...'});
+    var nameInput = el('input', {type: 'text', placeholder: t('ph_project_name')});
+    var pathInput = el('input', {type: 'text', placeholder: t('ph_project_path')});
+    var taskIdInput = el('input', {type: 'text', placeholder: t('ph_first_task_id')});
+    var promptInput = el('textarea', {placeholder: t('ph_first_prompt')});
     var toolSelect = el('select');
-    ['claude', 'codex', 'codex-review'].forEach(function(t) {
-      toolSelect.appendChild(el('option', {value: t, textContent: t}));
+    ['claude', 'codex', 'codex-review'].forEach(function(toolOpt) {
+      toolSelect.appendChild(el('option', {value: toolOpt, textContent: toolOpt}));
     });
 
-    form.appendChild(el('div', {className: 'form-row'}, [el('label', {textContent: 'Project'}), nameInput]));
-    form.appendChild(el('div', {className: 'form-row'}, [el('label', {textContent: 'Path'}), pathInput]));
-    form.appendChild(el('div', {className: 'form-row'}, [el('label', {textContent: 'Task ID'}), taskIdInput]));
-    form.appendChild(el('div', {className: 'form-row'}, [el('label', {textContent: 'Prompt'}), promptInput]));
-    form.appendChild(el('div', {className: 'form-row'}, [el('label', {textContent: 'Tool'}), toolSelect]));
+    form.appendChild(el('div', {className: 'form-row'}, [el('label', {}, [t('label_project'), helpIcon('help_project_name')]), nameInput]));
+    form.appendChild(el('div', {className: 'form-row'}, [el('label', {}, [t('label_path'), helpIcon('help_project_path')]), pathInput]));
+    form.appendChild(el('div', {className: 'form-row'}, [el('label', {}, [t('label_task_id'), helpIcon('help_task_id')]), taskIdInput]));
+    form.appendChild(el('div', {className: 'form-row'}, [el('label', {}, [t('label_prompt'), helpIcon('help_prompt')]), promptInput]));
+    form.appendChild(el('div', {className: 'form-row'}, [el('label', {}, [t('label_tool'), helpIcon('help_tool')]), toolSelect]));
     form.appendChild(el('div', {className: 'form-row'}, [
-      el('button', {className: 'btn btn-primary btn-sm', textContent: 'Save',
+      el('button', {className: 'btn btn-primary btn-sm', textContent: t('btn_save'),
         onclick: function() {
           postConfig('/api/config/tasks', {
             project: nameInput.value.trim(),
@@ -816,10 +1051,10 @@
           }, tabContainer);
         }
       }),
-      el('button', {className: 'btn btn-secondary btn-sm', textContent: 'Cancel',
+      el('button', {className: 'btn btn-secondary btn-sm', textContent: t('btn_cancel'),
         onclick: function() {
           clearEl(area);
-          area.appendChild(el('button', {className: 'btn btn-secondary', textContent: '+ Add Project',
+          area.appendChild(el('button', {className: 'btn btn-secondary', textContent: t('btn_add_project'),
             onclick: function() { showAddProjectForm(area, tabContainer); }
           }));
         }
@@ -853,7 +1088,7 @@
     if (!configBanner) return;
     clearEl(configBanner);
     var div = el('div', {className: 'error-banner'});
-    div.appendChild(el('strong', {textContent: 'Error:'}));
+    div.appendChild(el('strong', {textContent: t('error_prefix')}));
     var ul = el('ul');
     errors.forEach(function(e) { ul.appendChild(el('li', {textContent: e})); });
     div.appendChild(ul);
