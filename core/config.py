@@ -70,10 +70,12 @@ def load_config(path: str = "projects.yaml") -> Config:
     if not isinstance(raw, dict):
         raise ConfigError("Config must be a YAML mapping")
 
-    # --- Projects existence ---
+    # --- Projects ---
     raw_projects = raw.get("projects")
-    if not isinstance(raw_projects, dict) or not raw_projects:
-        raise ConfigError("'projects' must be a non-empty mapping")
+    if raw_projects is None:
+        raw_projects = {}
+    if not isinstance(raw_projects, dict):
+        raise ConfigError("'projects' must be a mapping")
 
     # --- Settings ---
     raw_settings = raw.get("settings", {}) or {}

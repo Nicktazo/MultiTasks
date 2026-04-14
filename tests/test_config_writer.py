@@ -239,10 +239,10 @@ def test_delete_project_no_refs(tmp_workspace):
 
 
 # ---------------------------------------------------------------------------
-# Test 9: cannot delete last project
+# Test 9: can delete last project (empty projects dict is valid)
 # ---------------------------------------------------------------------------
 
-def test_cannot_delete_last_project(tmp_workspace):
+def test_can_delete_last_project(tmp_workspace):
     data = {
         "projects": {
             "only": {
@@ -262,8 +262,8 @@ def test_cannot_delete_last_project(tmp_workspace):
 
     result = apply_mutation(cfg_path, _mutate_delete_project, {"name": "only"})
 
-    assert result["ok"] is False
-    assert any("last project" in e for e in result["errors"])
+    assert result["ok"] is True
+    assert "only" not in result["config"].get("projects", {})
 
 
 # ---------------------------------------------------------------------------

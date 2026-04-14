@@ -139,10 +139,6 @@ def _mutate_delete_project(raw: dict, args: dict) -> list[str]:
     if not isinstance(projects, dict) or name not in projects:
         return [f"Project '{name}' does not exist"]
 
-    # Cannot delete the last project
-    if len(projects) <= 1:
-        return ["Cannot delete the last project"]
-
     # Check for external references
     refs = _find_project_refs(projects, name)
     if refs:

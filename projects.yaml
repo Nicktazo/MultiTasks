@@ -1,32 +1,29 @@
 projects:
-  vultr:
-    path: /mnt/c/Python Code/vultr
+  book_subscription:
+    path: /mnt/c/Python Code/book_subscription
     tasks:
-      - id: rssvault-fix
-        prompt: "Fix Anthropic Blog RSS 403 error in scripts/rssvault_run.py"
+      - id: searchable-product-dropdown
+        prompt: |
+          BookManage.vue 的云打印产品模板下拉框改为可搜索模式，同时支持按名称和编码搜索。
+
+          需求：
+          1. 给 el-select 添加自定义 filter-method，同时匹配 prod_name 和 prod_code（不区分大小写）
+          2. 下拉选项显示格式改为 "prod_code - prod_name"（如 "29805N - 手册"），方便用户辨识
+          3. 选中后 el-select 显示的文本也应为 "prod_code - prod_name" 格式
+
+          注意：只改前端，不改后端。产品数据字段为 prod_code 和 prod_name（snake_case 扁平数组）。
         tool: claude
         depends_on: []
 
-      - id: rssvault-review
-        prompt: "Review the rssvault-fix changes for security issues"
+      - id: review-searchable-dropdown
+        prompt: |
+          Review the searchable-product-dropdown changes in BookManage.vue. Check:
+          1. filter-method correctly matches both prod_code and prod_name
+          2. Display format "prod_code - prod_name" is consistent in options and selected value
+          3. No regression on product selection and BOM loading flow
         tool: codex-review
-        review_of: rssvault-fix
-        depends_on: [rssvault-fix]
-
-  options_day_trader:
-    path: /mnt/c/Python Code/options_day_trader
-    tasks:
-      - id: news-api-test
-        prompt: "Write tests for the news ingest endpoint"
-        tool: claude
-        depends_on: [vultr:rssvault-fix]
-
-      - id: news-api-review
-        prompt: "Review news API test coverage"
-        tool: codex-review
-        review_of: news-api-test
-        depends_on: [news-api-test]
-
+        review_of: searchable-product-dropdown
+        depends_on: [searchable-product-dropdown]
 settings:
   max_parallel: 2
   notify: none
