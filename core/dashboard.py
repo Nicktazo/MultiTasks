@@ -19,6 +19,7 @@ from .config_writer import (
     _mutate_delete_project,
     _mutate_upsert_task,
     _mutate_delete_task,
+    _mutate_toggle_done,
     _mutate_settings,
 )
 from .dag import get_execution_order
@@ -106,6 +107,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 "review_of": b.get("review_of", ""),
             }),
             "/api/config/tasks/delete": (_mutate_delete_task, lambda b: {"project": b.get("project", ""), "id": b.get("id", "")}),
+            "/api/config/tasks/toggle-done": (_mutate_toggle_done, lambda b: {"project": b.get("project", ""), "id": b.get("id", "")}),
             "/api/config/settings": (_mutate_settings, lambda b: {k: v for k, v in b.items()}),
         }
 

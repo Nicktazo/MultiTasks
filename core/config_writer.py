@@ -50,6 +50,8 @@ def config_to_dict(config) -> dict:
                     t["review_of"] = ro_id if ro_proj == proj_name else task.review_of
                 else:
                     t["review_of"] = task.review_of
+            if task.done:
+                t["done"] = True
             tasks.append(t)
         projects[proj_name] = {"path": proj.path, "tasks": tasks}
 
@@ -178,10 +180,17 @@ def _mutate_upsert_task(raw: dict, args: dict) -> list[str]:
         task_data["depends_on"] = depends_on
     if review_of:
         task_data["review_of"] = review_of
+    # Explicit done from args (toggle endpoint); otherwise preserve existing
+    if "done" in args:
+        if args["done"] is True:
+            task_data["done"] = True
 
     # Update existing or append
     for i, t in enumerate(tasks):
         if isinstance(t, dict) and t.get("id") == task_id:
+            # Preserve done flag from existing task if not explicitly set in args
+            if "done" not in args and t.get("done") is True:
+                task_data["done"] = True
             tasks[i] = task_data
             return []
     tasks.append(task_data)
@@ -225,6 +234,24 @@ def _mutate_delete_task(raw: dict, args: dict) -> list[str]:
         tasks.pop(i)
 
     return []
+
+
+def _mutate_toggle_done(raw: dict, args: dict) -> list[str]:
+    """Toggle the done flag on a task."""
+    project = args.get("project", "")
+    task_id = args.get("id", "")
+    projects = raw.get("projects", {})
+    if project not in projects:
+        return [f"Project '{project}' does not exist"]
+    tasks = projects[project].get("tasks", [])
+    for t in tasks:
+        if isinstance(t, dict) and t.get("id") == task_id:
+            if t.get("done") is True:
+                t.pop("done", None)
+            else:
+                t["done"] = True
+            return []
+    return [f"Task '{task_id}' not found in project '{project}'"]
 
 
 def _mutate_settings(raw: dict, args: dict) -> list[str]:

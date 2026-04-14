@@ -89,6 +89,8 @@
   .cfg-task .cfg-task-deps { font-size: 12px; color: #888; }
   .cfg-task .cfg-task-prompt { font-size: 12px; color: #555; margin-top: 4px;
                                 white-space: pre-wrap; max-height: 60px; overflow: hidden; }
+  .cfg-task.cfg-done { opacity: 0.55; }
+  .cfg-done-badge { color: #27ae60; font-size: 12px; font-weight: 600; margin-left: 4px; }
 
   .btn { padding: 6px 14px; border: none; border-radius: 4px; font-size: 13px;
          cursor: pointer; font-weight: 500; }
@@ -245,18 +247,21 @@
   .ws-create-form input { padding:6px 10px; border:1px solid #ddd; border-radius:4px;
     font-size:13px; }
   .ws-error { color:#e74c3c; font-size:12px; margin-top:4px; }
-  .mini-creator { border-top:1px solid #eee; background:#fafafa; }
-  .mini-creator-toggle { display:flex; align-items:center; gap:6px; padding:6px 24px;
-    cursor:pointer; font-size:13px; color:#555; user-select:none; }
-  .mini-creator-toggle:hover { background:#f0f0f0; }
-  .mini-creator-toggle .arrow { font-size:10px; transition:transform 0.15s; }
-  .mini-creator-toggle .arrow.open { transform:rotate(90deg); }
-  .mini-creator-body { padding:8px 24px 12px; display:none; }
-  .mini-creator-body.open { display:block; }
+  .mini-creator-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.35);
+    display:flex; align-items:center; justify-content:center; z-index:1000; }
+  .mini-creator-modal { background:#fff; border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,0.2);
+    width:560px; max-width:90vw; max-height:80vh; display:flex; flex-direction:column; }
+  .mini-creator-header { display:flex; align-items:center; justify-content:space-between;
+    padding:14px 20px; border-bottom:1px solid #eee; }
+  .mini-creator-header h3 { margin:0; font-size:15px; font-weight:600; }
+  .mini-creator-close { background:none; border:none; font-size:20px; cursor:pointer;
+    color:#999; padding:0 4px; line-height:1; }
+  .mini-creator-close:hover { color:#333; }
+  .mini-creator-content { padding:16px 20px; overflow-y:auto; flex:1; }
   .mini-creator-input { display:flex; gap:8px; align-items:flex-end; }
-  .mini-creator-input textarea { flex:1; resize:vertical; padding:6px 10px; border:1px solid #ddd;
-    border-radius:6px; font-size:13px; height:40px; font-family:inherit; }
-  .mini-creator-results { margin-top:8px; }
+  .mini-creator-input textarea { flex:1; resize:vertical; padding:8px 10px; border:1px solid #ddd;
+    border-radius:6px; font-size:13px; height:60px; font-family:inherit; }
+  .mini-creator-results { margin-top:12px; }
   .mini-creator-error { color:#e74c3c; font-size:13px; padding:8px 0; }
 </style>
 </head>
@@ -317,6 +322,7 @@
       ph_project_name: 'project-name', ph_project_path: '/absolute/path/to/project',
       ph_first_task_id: 'first-task-id', ph_first_prompt: 'First task prompt...',
       title_delete_project: 'Delete project', title_delete_task: 'Delete task',
+      task_done_badge: 'Done', task_mark_done: 'Done', task_undo_done: 'Undo',
       prefix_deps: 'deps: ', prefix_review_of: 'review_of: ',
       help_max_parallel: 'Max concurrent tasks across all projects',
       help_timeout: 'Seconds before a task is killed. 0 = no limit',
@@ -389,6 +395,7 @@
       ph_project_name: '\u9879\u76ee\u540d\u79f0', ph_project_path: '/\u7edd\u5bf9\u8def\u5f84/\u5230/\u9879\u76ee',
       ph_first_task_id: '\u9996\u4e2a\u4efb\u52a1ID', ph_first_prompt: '\u9996\u4e2a\u4efb\u52a1\u6307\u4ee4...',
       title_delete_project: '\u5220\u9664\u9879\u76ee', title_delete_task: '\u5220\u9664\u4efb\u52a1',
+      task_done_badge: '\u5df2\u5b8c\u6210', task_mark_done: '\u5b8c\u6210', task_undo_done: '\u64a4\u9500',
       prefix_deps: '\u4f9d\u8d56: ', prefix_review_of: 'review_of: ',
       help_max_parallel: '\u6700\u591a\u540c\u65f6\u8fd0\u884c\u7684\u4efb\u52a1\u6570',
       help_timeout: '\u4efb\u52a1\u8d85\u65f6\u79d2\u6570\uff0c0=\u65e0\u9650\u5236',
@@ -1110,11 +1117,15 @@
   }
 
   function renderTaskCard(projName, task, tabContainer) {
-    var card = el('div', {className: 'cfg-task'});
+    var isDone = task.done === true;
+    var card = el('div', {className: 'cfg-task' + (isDone ? ' cfg-done' : '')});
     var headerRow = el('div', {className: 'cfg-task-header'}, [
       el('span', {className: 'cfg-task-id', textContent: task.id}),
       el('span', {className: 'cfg-task-tool', textContent: task.tool || ''}),
     ]);
+    if (isDone) {
+      headerRow.appendChild(el('span', {className: 'cfg-done-badge', textContent: '\u2713 ' + t('task_done_badge')}));
+    }
     if (task.depends_on && task.depends_on.length > 0) {
       headerRow.appendChild(el('span', {className: 'cfg-task-deps', textContent: t('prefix_deps') + task.depends_on.join(', ')}));
     }
@@ -1124,10 +1135,17 @@
     card.appendChild(headerRow);
     card.appendChild(el('div', {className: 'cfg-task-prompt', textContent: task.prompt || ''}));
 
-    /* Edit button */
+    /* Button group: Edit + Done toggle */
     var btnGroup = el('div', {className: 'btn-group', style: 'margin-top:6px'});
     btnGroup.appendChild(el('button', {className: 'btn btn-secondary btn-sm', textContent: t('btn_edit'),
       onclick: function() { showEditTaskForm(projName, task, card, tabContainer); }
+    }));
+    btnGroup.appendChild(el('button', {
+      className: 'btn btn-sm ' + (isDone ? 'btn-secondary' : 'btn-primary'),
+      textContent: isDone ? t('task_undo_done') : t('task_mark_done'),
+      onclick: function() {
+        postConfig('/api/config/tasks/toggle-done', {project: projName, id: task.id}, tabContainer);
+      }
     }));
     card.appendChild(btnGroup);
 
@@ -1632,68 +1650,76 @@
         if (st.status === 'running') startChatPoll();
       });
 
-      // Mini task creator panel
-      var miniCreator = el('div', {className: 'mini-creator'});
-      var arrow = el('span', {className: 'arrow', textContent: '\u25b6'});
-      var toggle = el('div', {className: 'mini-creator-toggle'}, [
-        arrow, document.createTextNode(t('gen_toggle'))
-      ]);
-      var creatorBody = el('div', {className: 'mini-creator-body'});
-      var creatorResults = el('div', {className: 'mini-creator-results'});
-      var genTextarea = el('textarea', {placeholder: t('gen_placeholder'), rows: '2'});
-      var genBtn = el('button', {className: 'btn btn-primary btn-sm', textContent: t('gen_btn')});
+      // Mini task creator modal (hidden by default)
+      function openMiniCreator() {
+        var overlay = el('div', {className: 'mini-creator-overlay'});
+        var modal = el('div', {className: 'mini-creator-modal'});
 
-      toggle.addEventListener('click', function() {
-        var isOpen = creatorBody.classList.toggle('open');
-        arrow.classList.toggle('open', isOpen);
-      });
+        var header = el('div', {className: 'mini-creator-header'}, [
+          el('h3', {textContent: t('gen_toggle')}),
+          el('button', {className: 'mini-creator-close', textContent: '\u00d7', onclick: function() {
+            overlay.remove();
+          }})
+        ]);
 
-      genBtn.addEventListener('click', function() {
-        var desc = genTextarea.value.trim();
-        if (!desc) return;
-        genBtn.disabled = true;
-        genBtn.textContent = t('gen_generating');
-        clearEl(creatorResults);
+        var content = el('div', {className: 'mini-creator-content'});
+        var creatorResults = el('div', {className: 'mini-creator-results'});
+        var genTextarea = el('textarea', {placeholder: t('gen_placeholder'), rows: '3'});
+        var genBtn = el('button', {className: 'btn btn-primary btn-sm', textContent: t('gen_btn')});
 
-        fetch('/api/workspace/generate-tasks', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({name: currentWorkspace, message: desc})
-        }).then(function(r) { return r.json(); }).then(function(res) {
-          genBtn.disabled = false;
-          genBtn.textContent = t('gen_btn');
+        genBtn.addEventListener('click', function() {
+          var desc = genTextarea.value.trim();
+          if (!desc) return;
+          genBtn.disabled = true;
+          genBtn.textContent = t('gen_generating');
           clearEl(creatorResults);
 
-          if (res.ok && res.tasks && res.tasks.length > 0) {
-            res.tasks.forEach(function(task) {
-              creatorResults.appendChild(renderTaskSuggest(task, existingIds, wsPath));
-            });
-          } else {
+          fetch('/api/workspace/generate-tasks', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name: currentWorkspace, message: desc})
+          }).then(function(r) { return r.json(); }).then(function(res) {
+            genBtn.disabled = false;
+            genBtn.textContent = t('gen_btn');
+            clearEl(creatorResults);
+
+            if (res.ok && res.tasks && res.tasks.length > 0) {
+              res.tasks.forEach(function(task) {
+                creatorResults.appendChild(renderTaskSuggest(task, existingIds, wsPath));
+              });
+            } else {
+              creatorResults.appendChild(el('div', {className: 'mini-creator-error',
+                textContent: t('gen_error', {err: res.error || 'Unknown'})}));
+            }
+          }).catch(function(err) {
+            genBtn.disabled = false;
+            genBtn.textContent = t('gen_btn');
+            clearEl(creatorResults);
             creatorResults.appendChild(el('div', {className: 'mini-creator-error',
-              textContent: t('gen_error', {err: res.error || 'Unknown'})}));
-          }
-        }).catch(function(err) {
-          genBtn.disabled = false;
-          genBtn.textContent = t('gen_btn');
-          clearEl(creatorResults);
-          creatorResults.appendChild(el('div', {className: 'mini-creator-error',
-            textContent: t('gen_error', {err: String(err)})}));
+              textContent: t('gen_error', {err: String(err)})}));
+          });
         });
-      });
 
-      genTextarea.addEventListener('keydown', function(e) {
-        if (e.key === 'Enter' && !e.shiftKey) {
-          e.preventDefault();
-          genBtn.click();
-        }
-      });
+        genTextarea.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            genBtn.click();
+          }
+        });
 
-      var genInput = el('div', {className: 'mini-creator-input'}, [genTextarea, genBtn]);
-      creatorBody.appendChild(genInput);
-      creatorBody.appendChild(creatorResults);
-      miniCreator.appendChild(toggle);
-      miniCreator.appendChild(creatorBody);
-      chatWrap.appendChild(miniCreator);
+        overlay.addEventListener('click', function(e) {
+          if (e.target === overlay) overlay.remove();
+        });
+
+        var genInput = el('div', {className: 'mini-creator-input'}, [genTextarea, genBtn]);
+        content.appendChild(genInput);
+        content.appendChild(creatorResults);
+        modal.appendChild(header);
+        modal.appendChild(content);
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+        genTextarea.focus();
+      }
 
       // Input bar
       var inputBar = el('div', {className: 'chat-input-bar'});
@@ -1711,8 +1737,12 @@
         sendChatMessage(currentWorkspace, msg, msgsDiv, textarea, sendBtn, existingIds, wsPath);
       }});
 
+      var genTriggerBtn = el('button', {className: 'btn btn-secondary btn-sm',
+        textContent: t('gen_toggle'), onclick: openMiniCreator});
+
       inputBar.appendChild(textarea);
       inputBar.appendChild(sendBtn);
+      inputBar.appendChild(genTriggerBtn);
       chatWrap.appendChild(inputBar);
 
       // Scroll to bottom

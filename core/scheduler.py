@@ -267,6 +267,17 @@ def run_pipeline(config: Config, scope: set[str] | None = None,
                     dag.done(task_id)
                     continue
 
+                # Config-level done: skip without executing, advance DAG
+                task_obj = config.tasks[task_id]
+                if task_obj.done:
+                    state.set_done(task_id, exit_code=0, log_file=None)
+                    print(f"  done  {task_id} (marked done)")
+                    if event_logger:
+                        event_logger.log("task_done", task_id=task_id, status="done",
+                                         message="Marked done in config")
+                    dag.done(task_id)
+                    continue
+
                 reason = should_skip(config, state, task_id)
                 if reason:
                     state.set_skipped(task_id, reason)

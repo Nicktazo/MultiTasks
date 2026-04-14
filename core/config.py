@@ -22,6 +22,7 @@ class Task:
     tool: str                        # "claude" | "codex" | "codex-review"
     depends_on: list[str] = field(default_factory=list)  # global IDs
     review_of: str | None = None     # codex-review: which task to review (global ID)
+    done: bool = False               # marked complete — skipped by pipeline
 
 
 @dataclass
@@ -184,6 +185,9 @@ def load_config(path: str = "projects.yaml") -> Config:
             if tool == "codex-review" and not review_of:
                 errors.append(f"Task '{global_id}': codex-review tasks must have 'review_of'")
 
+            raw_done = rt.get("done", False)
+            done = raw_done is True  # strict: only bool True, not truthy strings
+
             task = Task(
                 id=global_id,
                 local_id=local_id,
@@ -192,6 +196,7 @@ def load_config(path: str = "projects.yaml") -> Config:
                 tool=tool or "",
                 depends_on=deps,
                 review_of=review_of,
+                done=done,
             )
             project.tasks.append(task)
             config.tasks[global_id] = task
