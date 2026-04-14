@@ -22,7 +22,7 @@ from .config_writer import (
     _mutate_settings,
 )
 from .dag import get_execution_order
-from .chat import WorkspaceStore, build_task_list, build_run_summary, chat_reply
+from .chat import WorkspaceStore, build_task_list, build_run_summary, chat_reply, _extract_log_result
 
 _MAX_BODY = 1_048_576  # 1 MB
 
@@ -535,6 +535,77 @@ def start_dashboard(port: int, state_dir: str = "state",
     workspace_store = WorkspaceStore(
         os.path.join(os.path.dirname(config_path) or ".", "workspaces")
     )
+
+    _MAX_SYSTEM_MSG = 3000
+
+    def _on_run_complete(state, error, project):
+        """Fan out run results to workspace chat as system messages."""
+        if state is None:
+            # Runner-level failure — no RunState, notify project only
+            if project:
+                workspace_store.save_system_message(
+                    project,
+                    f"Pipeline failed: {error or 'unknown error'}",
+                    data={"error": error},
+                )
+            return
+
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+        # Group tasks by workspace (task_id format is "project:task")
+        ws_tasks: dict[str, list] = {}
+        for tid, ts in state.tasks.items():
+            ws_name = tid.split(":")[0] if ":" in tid else None
+            if ws_name:
+                ws_tasks.setdefault(ws_name, []).append((tid, ts))
+
+        for ws_name, task_list in ws_tasks.items():
+            ws = workspace_store.get(ws_name)
+            if not ws:
+                continue
+
+            tasks_data = []
+            for tid, ts in task_list:
+                task_info = {
+                    "task_id": tid,
+                    "status": ts.status,
+                    "duration_s": ts.duration_s,
+                    "error": (ts.error or "")[:200],
+                }
+                if ts.status == "done" and ts.log_file:
+                    result = _extract_log_result(project_root, ts.log_file)
+                    task_info["result"] = result[:500] if result else ""
+                tasks_data.append(task_info)
+
+            # Human-readable summary
+            done = sum(1 for td in tasks_data if td["status"] == "done")
+            failed = sum(1 for td in tasks_data if td["status"] == "failed")
+            skipped = sum(1 for td in tasks_data if td["status"] == "skipped")
+            parts = []
+            if done:
+                parts.append(f"{done} done")
+            if failed:
+                parts.append(f"{failed} failed")
+            if skipped:
+                parts.append(f"{skipped} skipped")
+            summary = f"Run {state.run_id}: {', '.join(parts)}"
+
+            for td in tasks_data:
+                summary += f"\n\n{td['task_id']}: {td['status']}"
+                if td.get("duration_s") is not None:
+                    summary += f" ({td['duration_s']}s)"
+                if td.get("error"):
+                    summary += f"\nError: {td['error']}"
+                elif td.get("result"):
+                    summary += f"\n{td['result'][:300]}"
+
+            summary = summary[:_MAX_SYSTEM_MSG]
+            workspace_store.save_system_message(
+                ws_name, summary,
+                data={"run_id": state.run_id, "tasks": tasks_data},
+            )
+
+    runner.on_complete = _on_run_complete
 
     handler = type(
         "_Handler",

@@ -123,6 +123,21 @@ class WorkspaceStore:
         ws["allowed_tools"] = tools
         self._write(f"{name}.json", ws)
 
+    def save_system_message(self, name: str, content: str,
+                            data: dict | None = None) -> None:
+        """Append a system message (e.g. run results) to workspace chat."""
+        self._validate_name(name)
+        ws = self.get(name)
+        if ws is None:
+            return
+        msgs = ws.setdefault("messages", [])
+        msg: dict = {"role": "system", "content": content, "ts": _now_iso()}
+        if data:
+            msg["data"] = data
+        msgs.append(msg)
+        ws["last_active"] = _now_iso()
+        self._write(f"{name}.json", ws)
+
     def save_turn(self, name: str, user_msg: str, reply: str,
                   tasks: list[dict]) -> None:
         """Append one turn (user + assistant) to workspace."""
@@ -375,7 +390,7 @@ def _parse_single_task(block: str) -> dict:
 
 def chat_reply(workspace: dict, user_message: str,
                task_list: str, run_summary: str,
-               timeout: int = 120,
+               timeout: int = 1200,
                workspace_store: WorkspaceStore | None = None) -> dict:
     """Call Claude CLI with session persistence and return parsed response."""
     session_id = workspace.get("session_id", "")

@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass, asdict
 from datetime import datetime
+from typing import Callable
 
 from .config import load_config, ConfigError
 from .dag import get_execution_order
@@ -60,6 +61,7 @@ class PipelineRunner:
         self._lock = threading.Lock()
         self._status = RunStatus()
         self._thread: threading.Thread | None = None
+        self.on_complete: Callable[[RunState | None, str | None, str | None], None] | None = None
 
     def start(self, config_path: str, mode: str, project: str | None = None) -> dict:
         """Attempt to start a run. Returns response dict."""
@@ -105,8 +107,20 @@ class PipelineRunner:
                 self._status.status = "done"
                 self._status.run_id = state.run_id
                 self._status.finished_at = datetime.now().isoformat()
+
+            if self.on_complete:
+                try:
+                    self.on_complete(state, None, project)
+                except Exception:
+                    pass
         except Exception as e:
             with self._lock:
                 self._status.status = "failed"
                 self._status.error = str(e)[:500]
                 self._status.finished_at = datetime.now().isoformat()
+
+            if self.on_complete:
+                try:
+                    self.on_complete(None, str(e)[:500], project)
+                except Exception:
+                    pass

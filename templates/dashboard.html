@@ -210,6 +210,9 @@
     text-align:left; }
   .chat-msg.user .msg-bubble { background:#3498db; color:#fff; }
   .chat-msg.assistant .msg-bubble { background:#fff; border:1px solid #e0e0e0; }
+  .chat-msg.system { text-align:center; }
+  .chat-msg.system .msg-bubble { background:#f5f5f5; color:#666; border:1px solid #e0e0e0;
+    font-size:13px; max-width:90%; }
   .chat-msg .msg-ts { font-size:11px; color:#999; margin-top:2px; }
   .chat-msg .msg-meta { display:flex; align-items:center; gap:8px; margin-top:2px; }
   .chat-msg.user .msg-meta { justify-content:flex-end; }
@@ -1279,6 +1282,9 @@
   /* ====== CHAT TAB ====== */
   var chatPollTimer = null;
   var currentWorkspace = null;
+  var renderedMsgCount = 0;
+  var prevChatRunStatus = null;
+  var chatPollWorkspace = null;  // workspace that started the run
 
   function stopChatPoll() {
     if (chatPollTimer) { clearInterval(chatPollTimer); chatPollTimer = null; }
@@ -1286,12 +1292,45 @@
 
   function startChatPoll() {
     stopChatPoll();
+    prevChatRunStatus = 'running';
+    chatPollWorkspace = currentWorkspace;  // capture which workspace started the run
     chatPollTimer = setInterval(function() {
       fetch('/api/run-status').then(function(r) { return r.json(); }).then(function(st) {
         updateChatRunBar(st);
+        // When run finishes, append new messages only if still viewing the same workspace
+        if (prevChatRunStatus === 'running' && (st.status === 'done' || st.status === 'failed')) {
+          if (currentWorkspace === chatPollWorkspace) {
+            appendNewMessages(chatPollWorkspace);
+          }
+        }
+        prevChatRunStatus = st.status;
         if (st.status !== 'running') stopChatPoll();
       });
     }, 3000);
+  }
+
+  function appendNewMessages(name) {
+    if (!name) return;
+    fetch('/api/workspace?name=' + encodeURIComponent(name))
+      .then(function(r) { return r.json(); })
+      .then(function(ws) {
+        var msgsDiv = document.getElementById('chat-messages');
+        if (!msgsDiv || ws.error) return;
+        var messages = ws.messages || [];
+        // Build existingIds for task rendering
+        var existingIds = {};
+        var wsPath = ws.path || '';
+        for (var i = renderedMsgCount; i < messages.length; i++) {
+          msgsDiv.appendChild(renderChatMessage(messages[i], existingIds, wsPath));
+        }
+        // Remove empty placeholder if messages were added
+        if (messages.length > renderedMsgCount) {
+          var emptyEl = msgsDiv.querySelector('.empty');
+          if (emptyEl) emptyEl.remove();
+        }
+        renderedMsgCount = messages.length;
+        msgsDiv.scrollTop = msgsDiv.scrollHeight;
+      });
   }
 
   function updateChatRunBar(st) {
@@ -1485,6 +1524,7 @@
         });
       }
       chatWrap.appendChild(msgsDiv);
+      renderedMsgCount = messages.length;
 
       // Allowed tools bar (checkboxes)
       var allowedTools = ws.allowed_tools || [];
@@ -1748,6 +1788,7 @@
       if (res.ok) {
         var assistantMsg = {role: 'assistant', content: res.reply, tasks: res.tasks, ts: new Date().toISOString()};
         msgsDiv.appendChild(renderChatMessage(assistantMsg, existingIds, wsPath));
+        renderedMsgCount += 2;  // user + assistant persisted
       } else {
         var errMsg = {role: 'assistant', content: t('chat_error', {err: res.error || 'Unknown'}), ts: new Date().toISOString()};
         msgsDiv.appendChild(renderChatMessage(errMsg, existingIds, wsPath));
