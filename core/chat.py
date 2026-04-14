@@ -405,36 +405,41 @@ def chat_reply(workspace: dict, user_message: str,
 
     user_message = user_message[:_MAX_USER_MESSAGE]
 
-    system_prompt = (
+    # Build --append-system-prompt: role instruction + ephemeral context.
+    # No --system-prompt so Claude CLI preserves its defaults (CLAUDE.md, etc.).
+    role_prompt = (
         f"You are a task planning assistant for project '{ws_name}'. "
         "Help the user plan, create, and iterate on tasks. "
         "To suggest a task, use [TASK]...[/TASK] blocks with fields: "
         "id, tool (claude|codex|codex-review), prompt, depends_on (optional), review_of (optional)."
     )
-
-    # Ephemeral context via --append-system-prompt (not stored in session)
-    append_parts: list[str] = []
+    append_parts: list[str] = [role_prompt]
     if task_list:
         append_parts.append("## Current Tasks\n" + task_list[:_MAX_APPEND_SECTION])
     if run_summary:
         append_parts.append("## Latest Run Results\n" + run_summary[:_MAX_APPEND_SECTION])
-    append_prompt = "\n\n".join(append_parts) if append_parts else None
+    append_prompt = "\n\n".join(append_parts)
 
     cmd = ["claude", "-p", user_message, "--output-format", "json"]
 
     if _session_exists(session_id):
         cmd += ["--resume", session_id]
     else:
-        cmd += ["--session-id", session_id, "--system-prompt", system_prompt]
+        cmd += ["--session-id", session_id]
 
-    if append_prompt:
-        cmd += ["--append-system-prompt", append_prompt]
+    cmd += ["--append-system-prompt", append_prompt]
 
     allowed_tools = workspace.get("allowed_tools") or []
     for tool in allowed_tools:
         tool = tool.strip()
         if tool:
             cmd += ["--allowedTools", tool]
+
+    # MCP: pass .mcp.json from workspace if it exists
+    if ws_path:
+        mcp_config = os.path.join(ws_path, ".mcp.json")
+        if os.path.isfile(mcp_config):
+            cmd += ["--mcp-config", mcp_config]
 
     env = os.environ.copy()
     env.pop("CLAUDECODE", None)

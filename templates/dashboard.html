@@ -1528,7 +1528,8 @@
 
       // Allowed tools bar (checkboxes)
       var allowedTools = ws.allowed_tools || [];
-      var availableTools = ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep'];
+      var availableTools = ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep',
+        'WebFetch', 'WebSearch', 'NotebookEdit', 'Task'];
       var toolsBar = el('div', {className: 'tools-bar'});
       toolsBar.appendChild(el('span', {textContent: 'Tools:', style: 'color:#888; font-weight:600'}));
 
