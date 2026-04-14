@@ -211,11 +211,21 @@
   .chat-msg.user .msg-bubble { background:#3498db; color:#fff; }
   .chat-msg.assistant .msg-bubble { background:#fff; border:1px solid #e0e0e0; }
   .chat-msg .msg-ts { font-size:11px; color:#999; margin-top:2px; }
+  .chat-msg .msg-meta { display:flex; align-items:center; gap:8px; margin-top:2px; }
+  .chat-msg.user .msg-meta { justify-content:flex-end; }
+  .copy-btn { background:none; border:none; cursor:pointer; font-size:12px; color:#999;
+    padding:1px 4px; border-radius:3px; }
+  .copy-btn:hover { color:#333; background:#f0f0f0; }
+  .tools-bar { display:flex; gap:8px; padding:6px 24px; background:#fefef6;
+    border-bottom:1px solid #eee; align-items:center; flex-wrap:wrap; font-size:12px; }
+  .tools-bar label { display:inline-flex; align-items:center; gap:3px; cursor:pointer;
+    padding:2px 6px; border-radius:4px; }
+  .tools-bar label:hover { background:#f0f0e8; }
+  .tools-bar label input[type=checkbox] { margin:0; }
   .chat-input-bar { display:flex; gap:8px; padding:12px 24px; background:#fff;
     border-top:1px solid #eee; align-items:flex-end; }
-  .chat-input-bar textarea { flex:1; resize:none; padding:8px 12px; border:1px solid #ddd;
-    border-radius:8px; font-size:14px; min-height:40px; max-height:120px;
-    font-family:inherit; }
+  .chat-input-bar textarea { flex:1; resize:vertical; padding:8px 12px; border:1px solid #ddd;
+    border-radius:8px; font-size:14px; height:60px; font-family:inherit; }
   .chat-run-bar { display:flex; gap:8px; padding:6px 24px; background:#f9f9f9;
     border-top:1px solid #eee; align-items:center; font-size:13px; }
   .task-suggest { background:#f0f7ff; border:1px solid #bdd7f1; border-radius:8px;
@@ -1476,6 +1486,36 @@
       }
       chatWrap.appendChild(msgsDiv);
 
+      // Allowed tools bar (checkboxes)
+      var allowedTools = ws.allowed_tools || [];
+      var availableTools = ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep'];
+      var toolsBar = el('div', {className: 'tools-bar'});
+      toolsBar.appendChild(el('span', {textContent: 'Tools:', style: 'color:#888; font-weight:600'}));
+
+      function saveAllowedTools(tools) {
+        fetch('/api/workspace/allowed-tools', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({name: currentWorkspace, tools: tools})
+        });
+      }
+
+      availableTools.forEach(function(tool) {
+        var cb = el('input', {type: 'checkbox'});
+        cb.checked = allowedTools.indexOf(tool) !== -1;
+        cb.addEventListener('change', function() {
+          if (this.checked) {
+            if (allowedTools.indexOf(tool) === -1) allowedTools.push(tool);
+          } else {
+            allowedTools = allowedTools.filter(function(t) { return t !== tool; });
+          }
+          saveAllowedTools(allowedTools);
+        });
+        var label = el('label', {}, [cb, tool]);
+        toolsBar.appendChild(label);
+      });
+      chatWrap.appendChild(toolsBar);
+
       // Run controls + status bar
       var chatRunStatus = el('span', {id: 'chat-run-bar', style: 'display:flex;align-items:center;gap:4px;margin-left:auto'}, [
         el('span', {className: 'dot dot-idle'}),
@@ -1532,11 +1572,7 @@
 
       // Input bar
       var inputBar = el('div', {className: 'chat-input-bar'});
-      var textarea = el('textarea', {placeholder: t('chat_placeholder'), rows: '1'});
-      textarea.addEventListener('input', function() {
-        this.style.height = 'auto';
-        this.style.height = Math.min(this.scrollHeight, 120) + 'px';
-      });
+      var textarea = el('textarea', {placeholder: t('chat_placeholder'), rows: '3'});
       textarea.addEventListener('keydown', function(e) {
         if (e.key === 'Enter' && !e.shiftKey) {
           e.preventDefault();
@@ -1567,12 +1603,21 @@
     bubble.textContent = msg.content || '';
     msgDiv.appendChild(bubble);
 
-    // Timestamp
+    // Meta row: timestamp + copy button
+    var meta = el('div', {className: 'msg-meta'});
     if (msg.ts) {
       var ts = msg.ts.split('T')[1] || msg.ts;
       if (ts.length > 8) ts = ts.substring(0, 8);
-      msgDiv.appendChild(el('div', {className: 'msg-ts', textContent: ts}));
+      meta.appendChild(el('span', {className: 'msg-ts', textContent: ts}));
     }
+    var copyBtn = el('button', {className: 'copy-btn', textContent: '\u2398 Copy', onclick: function() {
+      navigator.clipboard.writeText(msg.content || '').then(function() {
+        copyBtn.textContent = '\u2713 Copied';
+        setTimeout(function() { copyBtn.textContent = '\u2398 Copy'; }, 1500);
+      });
+    }});
+    meta.appendChild(copyBtn);
+    msgDiv.appendChild(meta);
 
     // Task cards for assistant messages
     if (role === 'assistant' && msg.tasks && msg.tasks.length > 0) {

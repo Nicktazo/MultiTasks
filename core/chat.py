@@ -6,6 +6,7 @@ import json
 import os
 import re
 import subprocess
+import uuid
 from datetime import datetime, timezone
 
 
@@ -85,6 +86,8 @@ class WorkspaceStore:
         ws = {
             "name": name,
             "path": path,
+            "session_id": str(uuid.uuid4()),
+            "allowed_tools": [],
             "messages": [],
             "created_at": _now_iso(),
             "last_active": _now_iso(),
@@ -103,6 +106,22 @@ class WorkspaceStore:
             return False
         os.unlink(fpath)
         return True
+
+    def update_session_id(self, name: str, session_id: str) -> None:
+        """Write session_id into workspace JSON (migration helper)."""
+        ws = self.get(name)
+        if ws is None:
+            return
+        ws["session_id"] = session_id
+        self._write(f"{name}.json", ws)
+
+    def update_allowed_tools(self, name: str, tools: list[str]) -> None:
+        """Update the allowed_tools list for a workspace."""
+        ws = self.get(name)
+        if ws is None:
+            return
+        ws["allowed_tools"] = tools
+        self._write(f"{name}.json", ws)
 
     def save_turn(self, name: str, user_msg: str, reply: str,
                   tasks: list[dict]) -> None:
@@ -137,74 +156,22 @@ class WorkspaceStore:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-# ---- Prompt building (Rule 4) ----
+# ---- Safety limits ----
 
-_CAPS = {
-    "system": 600,
-    "tasks": 1500,
-    "results": 3000,
-    "history": 6000,
-    "message": 2000,
-}
+_MAX_USER_MESSAGE = 100_000    # argv safety (Linux ~2MB limit)
+_MAX_APPEND_SECTION = 4_000    # per-section cap for --append-system-prompt
+_MAX_RUN_SUMMARY = 3_000       # per-task result cap in build_run_summary
 
 
-def _truncate(text: str, limit: int, note: str = "") -> str:
-    if len(text) <= limit:
-        return text
-    suffix = f"\n[{note}]" if note else ""
-    return text[:limit] + suffix
-
-
-def _build_prompt(workspace: dict, user_message: str,
-                  task_list: str, run_summary: str) -> str:
-    """Assemble prompt. Each section independently capped."""
-    name = workspace.get("name", "")
-    path = workspace.get("path", "")
-
-    system = _truncate(
-        f"You are a task planning assistant for project '{name}' at {path}. "
-        f"Help the user plan, create, and iterate on tasks. "
-        f"To suggest a task, use [TASK]...[/TASK] blocks with fields: "
-        f"id, tool (claude|codex|codex-review), prompt, depends_on (optional), review_of (optional).",
-        _CAPS["system"],
-    )
-
-    tasks_section = ""
-    if task_list:
-        tasks_section = "\n\n## Current Tasks\n" + _truncate(
-            task_list, _CAPS["tasks"], "task list truncated"
-        )
-
-    results_section = ""
-    if run_summary:
-        results_section = "\n\n## Latest Run Results\n" + _truncate(
-            run_summary, _CAPS["results"], "results truncated"
-        )
-
-    # Build history from messages (newest first, stop at cap)
-    messages = workspace.get("messages", [])
-    history_parts: list[str] = []
-    history_chars = 0
-    for msg in reversed(messages):
-        role = msg.get("role", "user")
-        content = msg.get("content", "")
-        line = f"{role}: {content}"
-        if history_chars + len(line) > _CAPS["history"]:
-            break
-        history_parts.insert(0, line)
-        history_chars += len(line)
-        if len(history_parts) >= 20:
-            break
-
-    history_section = ""
-    if history_parts:
-        history_section = "\n\n## Chat History\n" + "\n".join(history_parts)
-
-    user_section = "\n\nUser: " + _truncate(
-        user_message, _CAPS["message"], "message truncated"
-    )
-
-    return system + tasks_section + results_section + history_section + user_section
+def _session_exists(session_id: str) -> bool:
+    """Check if Claude CLI has a .jsonl session file for this ID."""
+    projects_dir = os.path.join(os.path.expanduser("~/.claude"), "projects")
+    if not os.path.isdir(projects_dir):
+        return False
+    for dirpath, _, filenames in os.walk(projects_dir):
+        if f"{session_id}.jsonl" in filenames:
+            return True
+    return False
 
 
 # ---- Run summary (Rule 2) ----
@@ -258,7 +225,7 @@ def build_run_summary(state_dir: str, project_name: str,
             lines.append(line)
 
         result = "\n".join(lines)
-        return result[:_CAPS["results"]]
+        return result[:_MAX_RUN_SUMMARY]
 
     return ""
 
@@ -408,21 +375,67 @@ def _parse_single_task(block: str) -> dict:
 
 def chat_reply(workspace: dict, user_message: str,
                task_list: str, run_summary: str,
-               timeout: int = 120) -> dict:
-    """Call Claude CLI and return parsed response."""
-    prompt = _build_prompt(workspace, user_message, task_list, run_summary)
+               timeout: int = 120,
+               workspace_store: WorkspaceStore | None = None) -> dict:
+    """Call Claude CLI with session persistence and return parsed response."""
+    session_id = workspace.get("session_id", "")
+    ws_name = workspace.get("name", "")
+    ws_path = workspace.get("path", "")
 
-    cmd = ["claude", "-p", prompt, "--output-format", "json"]
+    # Migration: old workspace without session_id → generate and persist
+    if not session_id:
+        session_id = str(uuid.uuid4())
+        if workspace_store and ws_name:
+            workspace_store.update_session_id(ws_name, session_id)
+
+    user_message = user_message[:_MAX_USER_MESSAGE]
+
+    system_prompt = (
+        f"You are a task planning assistant for project '{ws_name}'. "
+        "Help the user plan, create, and iterate on tasks. "
+        "To suggest a task, use [TASK]...[/TASK] blocks with fields: "
+        "id, tool (claude|codex|codex-review), prompt, depends_on (optional), review_of (optional)."
+    )
+
+    # Ephemeral context via --append-system-prompt (not stored in session)
+    append_parts: list[str] = []
+    if task_list:
+        append_parts.append("## Current Tasks\n" + task_list[:_MAX_APPEND_SECTION])
+    if run_summary:
+        append_parts.append("## Latest Run Results\n" + run_summary[:_MAX_APPEND_SECTION])
+    append_prompt = "\n\n".join(append_parts) if append_parts else None
+
+    cmd = ["claude", "-p", user_message, "--output-format", "json"]
+
+    if _session_exists(session_id):
+        cmd += ["--resume", session_id]
+    else:
+        cmd += ["--session-id", session_id, "--system-prompt", system_prompt]
+
+    if append_prompt:
+        cmd += ["--append-system-prompt", append_prompt]
+
+    allowed_tools = workspace.get("allowed_tools") or []
+    for tool in allowed_tools:
+        tool = tool.strip()
+        if tool:
+            cmd += ["--allowedTools", tool]
+
     env = os.environ.copy()
+    env.pop("CLAUDECODE", None)
 
     try:
         proc = subprocess.run(
             cmd, capture_output=True, text=True,
-            timeout=timeout, env=env,
+            timeout=timeout, env=env, cwd=ws_path or None,
         )
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        if ws_path and not os.path.isdir(ws_path):
+            msg = f"Workspace directory not found: {ws_path}"
+        else:
+            msg = "claude CLI not found"
         return {"ok": False, "reply": "", "tasks": [],
-                "error": "claude CLI not found"}
+                "error": msg}
     except subprocess.TimeoutExpired:
         return {"ok": False, "reply": "", "tasks": [],
                 "error": f"Response timed out ({timeout}s)"}
@@ -436,7 +449,6 @@ def chat_reply(workspace: dict, user_message: str,
     try:
         data = json.loads(proc.stdout)
     except (json.JSONDecodeError, ValueError):
-        # Fallback: treat stdout as plain text
         raw_text = proc.stdout.strip()
         clean, tasks = _parse_task_blocks(raw_text)
         return {"ok": True, "reply": clean, "tasks": tasks, "error": None}

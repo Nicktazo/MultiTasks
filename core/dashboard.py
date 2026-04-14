@@ -126,6 +126,10 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             self._handle_delete_workspace(body)
             return
 
+        if path == "/api/workspace/allowed-tools":
+            self._handle_update_allowed_tools(body)
+            return
+
         if path not in dispatch:
             self._send_json(404, {"ok": False, "config": None, "order": [], "errors": [f"Not found: {path}"]})
             return
@@ -209,6 +213,17 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         else:
             self._send_json(404, {"ok": False, "error": "Workspace not found"})
 
+    def _handle_update_allowed_tools(self, body: dict) -> None:
+        name = body.get("name", "").strip()
+        tools = body.get("tools")
+        if not name or not isinstance(tools, list):
+            self._send_json(400, {"ok": False, "error": "name and tools[] required"})
+            return
+        # Sanitize: keep only non-empty strings
+        tools = [str(t).strip() for t in tools if str(t).strip()]
+        self.workspace_store.update_allowed_tools(name, tools)
+        self._send_json(200, {"ok": True, "allowed_tools": tools})
+
     def _handle_chat(self, body: dict) -> None:
         name = body.get("name", "").strip()
         message = body.get("message", "").strip()
@@ -222,7 +237,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
 
         task_list = build_task_list(self.config_path, name)
         run_summary = build_run_summary(self.state_dir, name)
-        result = chat_reply(ws, message, task_list, run_summary)
+        result = chat_reply(ws, message, task_list, run_summary,
+                            workspace_store=self.workspace_store)
 
         if result["ok"]:
             self.workspace_store.save_turn(
