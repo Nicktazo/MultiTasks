@@ -12,7 +12,9 @@ from datetime import datetime
 @dataclass
 class GitSnapshot:
     commit: str                      # HEAD commit hash (short)
-    dirty_files: list[str] = field(default_factory=list)  # git status --porcelain lines
+    dirty_files: list[str] = field(default_factory=list)  # ALL git status --porcelain lines
+    tracked_dirty: list[str] = field(default_factory=list)  # modified/staged (affect git diff)
+    untracked: list[str] = field(default_factory=list)      # ?? lines (don't affect git diff)
     is_git: bool = False             # True if cwd is inside a git repo
 
 
@@ -56,17 +58,27 @@ def capture_git_snapshot(cwd: str) -> GitSnapshot:
     except Exception:
         pass
 
+    tracked: list[str] = []
+    untracked: list[str] = []
     try:
         r = subprocess.run(
             ["git", "status", "--porcelain"],
             cwd=cwd, capture_output=True, text=True, timeout=10,
         )
         if r.returncode == 0 and r.stdout.strip():
-            dirty = [line for line in r.stdout.strip().splitlines() if line.strip()]
+            for line in r.stdout.strip().splitlines():
+                if not line.strip():
+                    continue
+                dirty.append(line)
+                if line.startswith("?? "):
+                    untracked.append(line)
+                else:
+                    tracked.append(line)
     except Exception:
         pass
 
-    return GitSnapshot(commit=commit, dirty_files=dirty, is_git=True)
+    return GitSnapshot(commit=commit, dirty_files=dirty,
+                       tracked_dirty=tracked, untracked=untracked, is_git=True)
 
 
 def _safe_filename(task_id: str) -> str:

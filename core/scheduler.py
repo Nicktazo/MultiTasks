@@ -30,12 +30,9 @@ class TaskExecutionResult:
     error: str = ""
 
 
-def _resolve_workspace_policy(config: Config, task: Task) -> str:
-    """If this task is referenced by a codex-review task's review_of, force "block"."""
-    for t in config.tasks.values():
-        if t.review_of == task.id:
-            return "block"
-    return config.settings.dirty_workspace
+def _is_review_target(config: Config, task: Task) -> bool:
+    """True if this task is referenced by a codex-review task's review_of."""
+    return any(t.review_of == task.id for t in config.tasks.values())
 
 
 def resolve_project_scope(config: Config, project: str) -> set[str]:
@@ -85,15 +82,26 @@ def _execute_task(config: Config, state: RunState, task_id: str,
             notify_task_failed(config.settings, task_id, error)
             return TaskExecutionResult(task_id, project, FAILED, error)
 
-        policy = _resolve_workspace_policy(config, task)
+        policy = config.settings.dirty_workspace
+        review_target = _is_review_target(config, task)
 
         if snapshot.dirty_files:
-            if policy == "block":
-                error = f"Dirty workspace blocked ({len(snapshot.dirty_files)} files)"
+            # For review targets: only tracked changes (modified/staged) matter
+            # because untracked files don't appear in git diff.
+            # For non-review targets: respect user's policy on all dirty files.
+            block_files = snapshot.tracked_dirty if review_target else snapshot.dirty_files
+
+            if block_files and policy == "block":
+                error = f"Dirty workspace blocked ({len(block_files)} tracked files)"
                 state.set_failed(task_id, error, log_file=None)
                 print(f"  FAIL  {task_id} (dirty workspace, policy=block)")
                 notify_task_failed(config.settings, task_id, error)
                 return TaskExecutionResult(task_id, project, FAILED, error)
+            if review_target and snapshot.tracked_dirty and policy != "block":
+                # User set warn/ignore but tracked files affect review accuracy
+                shown = snapshot.tracked_dirty[:5]
+                print(f"  warn  {task_id}: tracked dirty files may affect review "
+                      f"({len(snapshot.tracked_dirty)} files): {[f.strip() for f in shown]}")
             elif policy == "warn":
                 shown = snapshot.dirty_files[:5]
                 print(f"  warn  {task_id}: dirty workspace ({len(snapshot.dirty_files)} files): "
