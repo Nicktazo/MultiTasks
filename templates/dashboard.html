@@ -245,6 +245,19 @@
   .ws-create-form input { padding:6px 10px; border:1px solid #ddd; border-radius:4px;
     font-size:13px; }
   .ws-error { color:#e74c3c; font-size:12px; margin-top:4px; }
+  .mini-creator { border-top:1px solid #eee; background:#fafafa; }
+  .mini-creator-toggle { display:flex; align-items:center; gap:6px; padding:6px 24px;
+    cursor:pointer; font-size:13px; color:#555; user-select:none; }
+  .mini-creator-toggle:hover { background:#f0f0f0; }
+  .mini-creator-toggle .arrow { font-size:10px; transition:transform 0.15s; }
+  .mini-creator-toggle .arrow.open { transform:rotate(90deg); }
+  .mini-creator-body { padding:8px 24px 12px; display:none; }
+  .mini-creator-body.open { display:block; }
+  .mini-creator-input { display:flex; gap:8px; align-items:flex-end; }
+  .mini-creator-input textarea { flex:1; resize:vertical; padding:6px 10px; border:1px solid #ddd;
+    border-radius:6px; font-size:13px; height:40px; font-family:inherit; }
+  .mini-creator-results { margin-top:8px; }
+  .mini-creator-error { color:#e74c3c; font-size:13px; padding:8px 0; }
 </style>
 </head>
 <body>
@@ -330,8 +343,12 @@
       ws_path_conflict: 'Path conflict',
       chat_placeholder: 'Type a message...', chat_send: 'Send',
       chat_thinking: 'Thinking...', chat_error: 'Error: {err}',
+      chat_no_tasks: 'No tasks were generated. Try a more specific request.',
       chat_empty: 'Start a conversation to plan tasks.',
-      task_create_btn: 'Create Task', task_created: 'Created', task_invalid: 'Invalid'
+      task_create_btn: 'Create Task', task_created: 'Created', task_invalid: 'Invalid',
+      gen_toggle: 'Quick Task Generator', gen_placeholder: 'Describe what you need done...',
+      gen_btn: 'Generate', gen_generating: 'Generating...',
+      gen_error: 'Generation failed: {err}'
     },
     zh: {
       title: 'MultiTasks \u63a7\u5236\u53f0',
@@ -398,8 +415,12 @@
       ws_path_conflict: '\u8def\u5f84\u51b2\u7a81',
       chat_placeholder: '\u8f93\u5165\u6d88\u606f...', chat_send: '\u53d1\u9001',
       chat_thinking: '\u601d\u8003\u4e2d...', chat_error: '\u9519\u8bef: {err}',
+      chat_no_tasks: '\u672a\u751f\u6210\u4efb\u52a1\u3002\u8bf7\u5c1d\u8bd5\u66f4\u5177\u4f53\u7684\u63cf\u8ff0\u3002',
       chat_empty: '\u5f00\u59cb\u5bf9\u8bdd\u6765\u89c4\u5212\u4efb\u52a1\u3002',
-      task_create_btn: '\u521b\u5efa\u4efb\u52a1', task_created: '\u5df2\u521b\u5efa', task_invalid: '\u65e0\u6548'
+      task_create_btn: '\u521b\u5efa\u4efb\u52a1', task_created: '\u5df2\u521b\u5efa', task_invalid: '\u65e0\u6548',
+      gen_toggle: '\u5feb\u901f\u4efb\u52a1\u751f\u6210', gen_placeholder: '\u63cf\u8ff0\u4f60\u9700\u8981\u5b8c\u6210\u7684\u4efb\u52a1...',
+      gen_btn: '\u751f\u6210', gen_generating: '\u751f\u6210\u4e2d...',
+      gen_error: '\u751f\u6210\u5931\u8d25: {err}'
     }
   };
 
@@ -1611,6 +1632,69 @@
         if (st.status === 'running') startChatPoll();
       });
 
+      // Mini task creator panel
+      var miniCreator = el('div', {className: 'mini-creator'});
+      var arrow = el('span', {className: 'arrow', textContent: '\u25b6'});
+      var toggle = el('div', {className: 'mini-creator-toggle'}, [
+        arrow, document.createTextNode(t('gen_toggle'))
+      ]);
+      var creatorBody = el('div', {className: 'mini-creator-body'});
+      var creatorResults = el('div', {className: 'mini-creator-results'});
+      var genTextarea = el('textarea', {placeholder: t('gen_placeholder'), rows: '2'});
+      var genBtn = el('button', {className: 'btn btn-primary btn-sm', textContent: t('gen_btn')});
+
+      toggle.addEventListener('click', function() {
+        var isOpen = creatorBody.classList.toggle('open');
+        arrow.classList.toggle('open', isOpen);
+      });
+
+      genBtn.addEventListener('click', function() {
+        var desc = genTextarea.value.trim();
+        if (!desc) return;
+        genBtn.disabled = true;
+        genBtn.textContent = t('gen_generating');
+        clearEl(creatorResults);
+
+        fetch('/api/workspace/generate-tasks', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({name: currentWorkspace, message: desc})
+        }).then(function(r) { return r.json(); }).then(function(res) {
+          genBtn.disabled = false;
+          genBtn.textContent = t('gen_btn');
+          clearEl(creatorResults);
+
+          if (res.ok && res.tasks && res.tasks.length > 0) {
+            res.tasks.forEach(function(task) {
+              creatorResults.appendChild(renderTaskSuggest(task, existingIds, wsPath));
+            });
+          } else {
+            creatorResults.appendChild(el('div', {className: 'mini-creator-error',
+              textContent: t('gen_error', {err: res.error || 'Unknown'})}));
+          }
+        }).catch(function(err) {
+          genBtn.disabled = false;
+          genBtn.textContent = t('gen_btn');
+          clearEl(creatorResults);
+          creatorResults.appendChild(el('div', {className: 'mini-creator-error',
+            textContent: t('gen_error', {err: String(err)})}));
+        });
+      });
+
+      genTextarea.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          genBtn.click();
+        }
+      });
+
+      var genInput = el('div', {className: 'mini-creator-input'}, [genTextarea, genBtn]);
+      creatorBody.appendChild(genInput);
+      creatorBody.appendChild(creatorResults);
+      miniCreator.appendChild(toggle);
+      miniCreator.appendChild(creatorBody);
+      chatWrap.appendChild(miniCreator);
+
       // Input bar
       var inputBar = el('div', {className: 'chat-input-bar'});
       var textarea = el('textarea', {placeholder: t('chat_placeholder'), rows: '3'});
@@ -1787,7 +1871,11 @@
       sendBtn.disabled = false;
 
       if (res.ok) {
-        var assistantMsg = {role: 'assistant', content: res.reply, tasks: res.tasks, ts: new Date().toISOString()};
+        var content = res.reply;
+        if (res.task_hint === 'no_tasks_generated') {
+          content += '\n\n⚠ ' + t('chat_no_tasks');
+        }
+        var assistantMsg = {role: 'assistant', content: content, tasks: res.tasks, ts: new Date().toISOString()};
         msgsDiv.appendChild(renderChatMessage(assistantMsg, existingIds, wsPath));
         renderedMsgCount += 2;  // user + assistant persisted
       } else {

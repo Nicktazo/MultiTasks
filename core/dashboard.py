@@ -22,7 +22,10 @@ from .config_writer import (
     _mutate_settings,
 )
 from .dag import get_execution_order
-from .chat import WorkspaceStore, build_task_list, build_run_summary, chat_reply, _extract_log_result
+from .chat import (
+    WorkspaceStore, build_task_list, build_run_summary,
+    chat_reply, generate_tasks, _extract_log_result,
+)
 
 _MAX_BODY = 1_048_576  # 1 MB
 
@@ -120,6 +123,10 @@ class _DashboardHandler(BaseHTTPRequestHandler):
 
         if path == "/api/workspace/chat":
             self._handle_chat(body)
+            return
+
+        if path == "/api/workspace/generate-tasks":
+            self._handle_generate(body)
             return
 
         if path == "/api/workspace/delete":
@@ -244,6 +251,20 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             self.workspace_store.save_turn(
                 name, message, result["reply"], result["tasks"]
             )
+        self._send_json(200, result)
+
+    def _handle_generate(self, body: dict) -> None:
+        name = body.get("name", "").strip()
+        message = body.get("message", "").strip()
+        if not name or not message:
+            self._send_json(400, {"ok": False, "error": "name and message required"})
+            return
+        ws = self.workspace_store.get(name)
+        if ws is None:
+            self._send_json(404, {"ok": False, "error": f"Workspace not found: {name}"})
+            return
+
+        result = generate_tasks(name, message, self.config_path)
         self._send_json(200, result)
 
     def _serve_config(self) -> None:

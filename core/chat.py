@@ -6,6 +6,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import uuid
 from datetime import datetime, timezone
 
@@ -272,7 +273,12 @@ def _extract_log_result(project_root: str, log_path: str) -> str:
 
 
 def build_task_list(config_path: str, project_name: str) -> str:
-    """Read YAML config and format tasks for the given project."""
+    """Read YAML config and format existing tasks as advisory context.
+
+    Best-effort: returns at most 15 tasks with truncated prompts.
+    Used as a hint for the LLM to avoid ID collisions and respect
+    dependency structure — not an exhaustive correctness guarantee.
+    """
     import yaml
 
     try:
@@ -485,10 +491,109 @@ def chat_reply(workspace: dict, user_message: str,
     except (json.JSONDecodeError, ValueError):
         raw_text = proc.stdout.strip()
         clean, tasks = _parse_task_blocks(raw_text)
-        return {"ok": True, "reply": clean, "tasks": tasks, "error": None}
+        resp = {"ok": True, "reply": clean, "tasks": tasks, "error": None}
+        if not tasks and _looks_like_task_request(user_message):
+            resp["task_hint"] = "no_tasks_generated"
+        return resp
 
     result_text = data.get("result", "") if isinstance(data, dict) else str(data)
     clean, tasks = _parse_task_blocks(result_text)
+    resp: dict = {"ok": True, "reply": clean, "tasks": tasks, "error": None}
+    if not tasks and _looks_like_task_request(user_message):
+        resp["task_hint"] = "no_tasks_generated"
+    return resp
+
+
+# ---- Task request detection ----
+
+_TASK_REQUEST_KEYWORDS = re.compile(
+    r"\b(create|add|plan|generate|make|build|define|write)\b.*\b(task|tasks|step|steps|pipeline)\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_task_request(message: str) -> bool:
+    """Heuristic: does the user message look like a task-creation request?"""
+    return bool(_TASK_REQUEST_KEYWORDS.search(message))
+
+
+# ---- Isolated task generator ----
+
+def generate_tasks(project_name: str, user_message: str,
+                   config_path: str, timeout: int = 120) -> dict:
+    """Generate tasks in an isolated Claude CLI invocation.
+
+    Unlike chat_reply, this runs without session state, workspace tools,
+    or MCP config — purely a stateless prompt-in/tasks-out call.
+    Uses a portable temp directory as cwd to avoid touching the workspace.
+    """
+    user_message = user_message[:_MAX_USER_MESSAGE]
+    task_list = build_task_list(config_path, project_name)
+
+    system_prompt = (
+        f"## Task Generator (project: {project_name})\n"
+        "You are a task planning assistant. Generate [TASK]...[/TASK] blocks.\n\n"
+        "Format (one block per task):\n"
+        "[TASK]\n"
+        "id: my-task-id\n"
+        "tool: claude\n"
+        "prompt: Detailed instruction for the task...\n"
+        "depends_on: other-task-id\n"
+        "[/TASK]\n\n"
+        "Fields:\n"
+        "- id: unique identifier (required)\n"
+        "- tool: claude | codex | codex-review (required)\n"
+        "- prompt: full instruction text (required)\n"
+        "- depends_on: comma-separated prerequisite task IDs (optional)\n"
+        "- review_of: task ID to review (optional, only with codex-review)\n\n"
+        "IMPORTANT: Output ONLY [TASK] blocks. No prose."
+    )
+    if task_list:
+        system_prompt += (
+            "\n\n## Existing Tasks (advisory — avoid duplicate IDs)\n"
+            + task_list[:_MAX_APPEND_SECTION]
+        )
+
+    cmd = [
+        "claude", "-p", user_message,
+        "--output-format", "json",
+        "--no-session-persistence",
+        "--system-prompt", system_prompt,
+    ]
+
+    env = os.environ.copy()
+    env.pop("CLAUDECODE", None)
+
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True,
+            timeout=timeout, env=env,
+            cwd=tempfile.gettempdir(),
+        )
+    except FileNotFoundError:
+        return {"ok": False, "reply": "", "tasks": [],
+                "error": "claude CLI not found"}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "reply": "", "tasks": [],
+                "error": f"Generation timed out ({timeout}s)"}
+
+    if proc.returncode != 0:
+        stderr = (proc.stderr or "")[:200]
+        return {"ok": False, "reply": "", "tasks": [],
+                "error": f"CLI error: {stderr}"}
+
+    try:
+        data = json.loads(proc.stdout)
+        result_text = data.get("result", "") if isinstance(data, dict) else str(data)
+    except (json.JSONDecodeError, ValueError):
+        result_text = proc.stdout.strip()
+
+    clean, tasks = _parse_task_blocks(result_text)
+
+    if not tasks:
+        return {"ok": False, "reply": clean, "tasks": [],
+                "error": "No tasks generated — try a more specific request"}
+
     return {"ok": True, "reply": clean, "tasks": tasks, "error": None}
 
 
