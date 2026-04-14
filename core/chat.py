@@ -408,10 +408,24 @@ def chat_reply(workspace: dict, user_message: str,
     # Build --append-system-prompt: role instruction + ephemeral context.
     # No --system-prompt so Claude CLI preserves its defaults (CLAUDE.md, etc.).
     role_prompt = (
-        f"You are a task planning assistant for project '{ws_name}'. "
-        "Help the user plan, create, and iterate on tasks. "
-        "To suggest a task, use [TASK]...[/TASK] blocks with fields: "
-        "id, tool (claude|codex|codex-review), prompt, depends_on (optional), review_of (optional)."
+        f"## Task Planning Mode (project: {ws_name})\n"
+        "You are also a task planning assistant. When the user asks you to create, "
+        "add, or plan a task, you MUST include [TASK]...[/TASK] blocks in your response.\n\n"
+        "Format (one block per task):\n"
+        "[TASK]\n"
+        "id: my-task-id\n"
+        "tool: claude\n"
+        "prompt: Detailed instruction for the task...\n"
+        "depends_on: other-task-id\n"
+        "[/TASK]\n\n"
+        "Fields:\n"
+        "- id: unique identifier (required)\n"
+        "- tool: claude | codex | codex-review (required)\n"
+        "- prompt: full instruction text (required)\n"
+        "- depends_on: comma-separated prerequisite task IDs (optional)\n"
+        "- review_of: task ID to review (optional, only with codex-review)\n\n"
+        "IMPORTANT: Always output [TASK] blocks when the user wants to create tasks. "
+        "Do not just describe the task in prose."
     )
     append_parts: list[str] = [role_prompt]
     if task_list:
