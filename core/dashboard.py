@@ -22,6 +22,7 @@ from .config_writer import (
     _mutate_settings,
 )
 from .dag import get_execution_order
+from .chat import WorkspaceStore, build_task_list, build_run_summary, chat_reply
 
 _MAX_BODY = 1_048_576  # 1 MB
 
@@ -34,6 +35,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
     initial_run_id: str = ""
     config_path: str = "projects.yaml"
     runner = None  # PipelineRunner, injected via type()
+    workspace_store: WorkspaceStore = None  # type: ignore
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
@@ -61,6 +63,11 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             self._serve_log(log_path)
         elif path == "/api/events":
             self._serve_events()
+        elif path == "/api/workspaces":
+            self._serve_workspaces()
+        elif path == "/api/workspace":
+            ws_name = params.get("name", [None])[0]
+            self._serve_workspace(ws_name)
         else:
             self._send_json(404, {"error": f"Not found: {self.path}"})
 
@@ -107,6 +114,18 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             self._handle_run(body)
             return
 
+        if path == "/api/workspaces" and self.command == "POST":
+            self._handle_create_workspace(body)
+            return
+
+        if path == "/api/workspace/chat":
+            self._handle_chat(body)
+            return
+
+        if path == "/api/workspace/delete":
+            self._handle_delete_workspace(body)
+            return
+
         if path not in dispatch:
             self._send_json(404, {"ok": False, "config": None, "order": [], "errors": [f"Not found: {path}"]})
             return
@@ -151,6 +170,65 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             return get_execution_order(config)
         except Exception:
             return []
+
+    # ---- Workspace / Chat endpoints ----
+
+    def _serve_workspaces(self) -> None:
+        self._send_json(200, self.workspace_store.list())
+
+    def _serve_workspace(self, name: str | None) -> None:
+        if not name:
+            self._send_json(400, {"error": "Missing 'name' parameter"})
+            return
+        ws = self.workspace_store.get(name)
+        if ws is None:
+            self._send_json(404, {"error": f"Workspace not found: {name}"})
+            return
+        self._send_json(200, ws)
+
+    def _handle_create_workspace(self, body: dict) -> None:
+        name = body.get("name", "").strip()
+        path = body.get("path", "").strip()
+        if not name:
+            self._send_json(400, {"ok": False, "error": "Name is required"})
+            return
+        try:
+            ws = self.workspace_store.create(name, path, self.config_path)
+            self._send_json(201, {"ok": True, "workspace": ws})
+        except ValueError as e:
+            self._send_json(400, {"ok": False, "error": str(e)})
+
+    def _handle_delete_workspace(self, body: dict) -> None:
+        name = body.get("name", "").strip()
+        if not name:
+            self._send_json(400, {"ok": False, "error": "Name is required"})
+            return
+        deleted = self.workspace_store.delete(name)
+        if deleted:
+            self._send_json(200, {"ok": True})
+        else:
+            self._send_json(404, {"ok": False, "error": "Workspace not found"})
+
+    def _handle_chat(self, body: dict) -> None:
+        name = body.get("name", "").strip()
+        message = body.get("message", "").strip()
+        if not name or not message:
+            self._send_json(400, {"ok": False, "error": "name and message required"})
+            return
+        ws = self.workspace_store.get(name)
+        if ws is None:
+            self._send_json(404, {"ok": False, "error": f"Workspace not found: {name}"})
+            return
+
+        task_list = build_task_list(self.config_path, name)
+        run_summary = build_run_summary(self.state_dir, name)
+        result = chat_reply(ws, message, task_list, run_summary)
+
+        if result["ok"]:
+            self.workspace_store.save_turn(
+                name, message, result["reply"], result["tasks"]
+            )
+        self._send_json(200, result)
 
     def _serve_config(self) -> None:
         try:
@@ -438,13 +516,16 @@ def start_dashboard(port: int, state_dir: str = "state",
     template_path = os.path.normpath(os.path.join(template_dir, "dashboard.html"))
 
     runner = PipelineRunner()
+    workspace_store = WorkspaceStore(
+        os.path.join(os.path.dirname(config_path) or ".", "workspaces")
+    )
 
     handler = type(
         "_Handler",
         (_DashboardHandler,),
         {"state_dir": state_dir, "template_path": template_path,
          "initial_run_id": run_id or "", "config_path": config_path,
-         "runner": runner},
+         "runner": runner, "workspace_store": workspace_store},
     )
 
     try:

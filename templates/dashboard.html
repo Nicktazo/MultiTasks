@@ -195,6 +195,43 @@
   .log-stderr-label { padding:4px 12px; background:#3e2020; color:#f44747;
     font-size:11px; font-weight:600; border-top:1px solid #3e3e3e; }
   .log-stderr { background:#2d1515 !important; }
+
+  /* Chat tab */
+  .ws-bar { display:flex; align-items:center; gap:10px; padding:10px 24px;
+    background:#fff; border-bottom:1px solid #eee; }
+  .ws-bar select { padding:6px 10px; border:1px solid #ddd; border-radius:4px; font-size:13px; }
+  .ws-bar .btn { flex-shrink:0; }
+  .chat-container { display:flex; flex-direction:column; height:calc(100vh - 140px); }
+  .chat-messages { flex:1; overflow-y:auto; padding:16px 24px; }
+  .chat-msg { margin-bottom:16px; }
+  .chat-msg.user { text-align:right; }
+  .chat-msg .msg-bubble { display:inline-block; max-width:80%; padding:8px 14px;
+    border-radius:12px; font-size:14px; line-height:1.5; white-space:pre-wrap;
+    text-align:left; }
+  .chat-msg.user .msg-bubble { background:#3498db; color:#fff; }
+  .chat-msg.assistant .msg-bubble { background:#fff; border:1px solid #e0e0e0; }
+  .chat-msg .msg-ts { font-size:11px; color:#999; margin-top:2px; }
+  .chat-input-bar { display:flex; gap:8px; padding:12px 24px; background:#fff;
+    border-top:1px solid #eee; align-items:flex-end; }
+  .chat-input-bar textarea { flex:1; resize:none; padding:8px 12px; border:1px solid #ddd;
+    border-radius:8px; font-size:14px; min-height:40px; max-height:120px;
+    font-family:inherit; }
+  .chat-run-bar { display:flex; gap:8px; padding:6px 24px; background:#f9f9f9;
+    border-top:1px solid #eee; align-items:center; font-size:13px; }
+  .task-suggest { background:#f0f7ff; border:1px solid #bdd7f1; border-radius:8px;
+    padding:10px 14px; margin-top:8px; }
+  .task-suggest .task-field { font-size:12px; color:#555; margin-bottom:2px; }
+  .task-suggest .task-field strong { color:#333; }
+  .task-suggest.invalid { background:#fdf0ef; border-color:#e74c3c; }
+  .thinking-bubble { display:inline-block; padding:8px 14px; background:#fff;
+    border:1px solid #e0e0e0; border-radius:12px; }
+  .thinking-dots span { animation:pulse 1.4s infinite; font-size:18px; }
+  .thinking-dots span:nth-child(2) { animation-delay:0.2s; }
+  .thinking-dots span:nth-child(3) { animation-delay:0.4s; }
+  .ws-create-form { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .ws-create-form input { padding:6px 10px; border:1px solid #ddd; border-radius:4px;
+    font-size:13px; }
+  .ws-error { color:#e74c3c; font-size:12px; margin-top:4px; }
 </style>
 </head>
 <body>
@@ -211,6 +248,7 @@
   var lastKnownStatus = null;
   var runsContainer = null;
   var configContainer = null;
+  var chatContainer = null;
 
   /* ====== i18n ====== */
   var LANGS = {
@@ -271,7 +309,16 @@
       help_retry_latest: 'Re-run only failed/skipped tasks from latest run',
       btn_view_log: 'View Log', btn_hide_log: 'Hide Log',
       log_truncated: '(truncated at 100 KB)', log_load_failed: 'Failed to load log',
-      log_status_ok: 'OK', log_status_err: 'ERROR', log_turns: 'turns', log_stderr: 'STDERR'
+      log_status_ok: 'OK', log_status_err: 'ERROR', log_turns: 'turns', log_stderr: 'STDERR',
+      tab_chat: 'Chat',
+      ws_new: 'New', ws_name: 'Name', ws_path: 'Path', ws_delete: 'Delete',
+      ws_confirm_delete: 'Delete chat history for workspace "{name}"? Project and tasks in YAML are preserved.',
+      ws_no_workspaces: 'No workspaces yet. Create one to start chatting.',
+      ws_path_conflict: 'Path conflict',
+      chat_placeholder: 'Type a message...', chat_send: 'Send',
+      chat_thinking: 'Thinking...', chat_error: 'Error: {err}',
+      chat_empty: 'Start a conversation to plan tasks.',
+      task_create_btn: 'Create Task', task_created: 'Created', task_invalid: 'Invalid'
     },
     zh: {
       title: 'MultiTasks \u63a7\u5236\u53f0',
@@ -330,7 +377,16 @@
       help_retry_latest: '\u4ec5\u91cd\u8dd1\u6700\u8fd1\u4e00\u6b21\u5931\u8d25/\u8df3\u8fc7\u7684\u4efb\u52a1',
       btn_view_log: '\u67e5\u770b\u65e5\u5fd7', btn_hide_log: '\u6536\u8d77\u65e5\u5fd7',
       log_truncated: '(\u5df2\u622a\u65ad\uff0c\u6700\u5927 100 KB)', log_load_failed: '\u52a0\u8f7d\u65e5\u5fd7\u5931\u8d25',
-      log_status_ok: '\u6210\u529f', log_status_err: '\u5931\u8d25', log_turns: '\u8f6e', log_stderr: '\u9519\u8bef\u8f93\u51fa'
+      log_status_ok: '\u6210\u529f', log_status_err: '\u5931\u8d25', log_turns: '\u8f6e', log_stderr: '\u9519\u8bef\u8f93\u51fa',
+      tab_chat: '\u5bf9\u8bdd',
+      ws_new: '\u65b0\u5efa', ws_name: '\u540d\u79f0', ws_path: '\u8def\u5f84', ws_delete: '\u5220\u9664',
+      ws_confirm_delete: '\u5220\u9664\u5de5\u4f5c\u533a "{name}" \u7684\u804a\u5929\u8bb0\u5f55\uff1fYAML\u4e2d\u7684\u9879\u76ee\u548c\u4efb\u52a1\u4e0d\u53d7\u5f71\u54cd\u3002',
+      ws_no_workspaces: '\u8fd8\u6ca1\u6709\u5de5\u4f5c\u533a\u3002\u521b\u5efa\u4e00\u4e2a\u5f00\u59cb\u5bf9\u8bdd\u3002',
+      ws_path_conflict: '\u8def\u5f84\u51b2\u7a81',
+      chat_placeholder: '\u8f93\u5165\u6d88\u606f...', chat_send: '\u53d1\u9001',
+      chat_thinking: '\u601d\u8003\u4e2d...', chat_error: '\u9519\u8bef: {err}',
+      chat_empty: '\u5f00\u59cb\u5bf9\u8bdd\u6765\u89c4\u5212\u4efb\u52a1\u3002',
+      task_create_btn: '\u521b\u5efa\u4efb\u52a1', task_created: '\u5df2\u521b\u5efa', task_invalid: '\u65e0\u6548'
     }
   };
 
@@ -394,15 +450,18 @@
     }
     /* Re-render tab buttons */
     var tabBtns = document.querySelectorAll('.tab-btn');
-    if (tabBtns.length >= 2) {
+    if (tabBtns.length >= 3) {
       tabBtns[0].textContent = t('tab_runs');
       tabBtns[1].textContent = t('tab_config');
+      tabBtns[2].textContent = t('tab_chat');
     }
     /* Re-render active tab content */
     if (currentTab === 'runs' && runsContainer) {
       loadRunsTab(runsContainer, selectedRunId);
     } else if (currentTab === 'config' && configContainer) {
       loadConfigTab(configContainer);
+    } else if (currentTab === 'chat' && chatContainer) {
+      loadChatTab(chatContainer);
     }
   }
 
@@ -457,31 +516,39 @@
       el('button', {className: 'tab-btn' + (currentTab === 'runs' ? ' active' : ''),
                     textContent: t('tab_runs'), onclick: function() { switchTab('runs'); }}),
       el('button', {className: 'tab-btn' + (currentTab === 'config' ? ' active' : ''),
-                    textContent: t('tab_config'), onclick: function() { switchTab('config'); }})
+                    textContent: t('tab_config'), onclick: function() { switchTab('config'); }}),
+      el('button', {className: 'tab-btn' + (currentTab === 'chat' ? ' active' : ''),
+                    textContent: t('tab_chat'), onclick: function() { switchTab('chat'); }})
     ]);
     app.appendChild(tabs);
 
     var runsTab = el('div', {id: 'tab-runs', className: 'tab-content' + (currentTab === 'runs' ? ' active' : '')});
     var cfgTab = el('div', {id: 'tab-config', className: 'tab-content' + (currentTab === 'config' ? ' active' : '')});
+    var chatTab = el('div', {id: 'tab-chat', className: 'tab-content' + (currentTab === 'chat' ? ' active' : '')});
     app.appendChild(runsTab);
     app.appendChild(cfgTab);
+    app.appendChild(chatTab);
     runsContainer = runsTab;
     configContainer = cfgTab;
+    chatContainer = chatTab;
 
-    return {runs: runsTab, config: cfgTab};
+    return {runs: runsTab, config: cfgTab, chat: chatTab};
   }
 
   function switchTab(tab) {
     currentTab = tab;
     disconnectSSE();
     stopPolling();
+    stopChatPoll();
     var containers = renderShell();
     if (tab === 'runs') {
       var metaEl = document.querySelector('meta[name="initial-run-id"]');
       var initialRunId = metaEl ? metaEl.getAttribute('content') : '';
       loadRunsTab(containers.runs, initialRunId || undefined);
-    } else {
+    } else if (tab === 'config') {
       loadConfigTab(containers.config);
+    } else if (tab === 'chat') {
+      loadChatTab(containers.chat);
     }
   }
 
@@ -1197,6 +1264,458 @@
     errors.forEach(function(e) { ul.appendChild(el('li', {textContent: e})); });
     div.appendChild(ul);
     configBanner.appendChild(div);
+  }
+
+  /* ====== CHAT TAB ====== */
+  var chatPollTimer = null;
+  var currentWorkspace = null;
+
+  function stopChatPoll() {
+    if (chatPollTimer) { clearInterval(chatPollTimer); chatPollTimer = null; }
+  }
+
+  function startChatPoll() {
+    stopChatPoll();
+    chatPollTimer = setInterval(function() {
+      fetch('/api/run-status').then(function(r) { return r.json(); }).then(function(st) {
+        updateChatRunBar(st);
+        if (st.status !== 'running') stopChatPoll();
+      });
+    }, 3000);
+  }
+
+  function updateChatRunBar(st) {
+    var bar = document.getElementById('chat-run-bar');
+    if (!bar) return;
+    clearEl(bar);
+    var dot = el('span', {className: 'dot dot-' + st.status});
+    var text;
+    if (st.status === 'running' && st.started_at) {
+      var timeStr = st.started_at.split('T')[1];
+      text = timeStr ? t('status_running_since', {mode: st.mode, time: timeStr.substring(0, 8)}) : t('status_running');
+    } else if (st.status === 'done' && st.run_id) {
+      text = t('status_done_run', {id: st.run_id});
+    } else if (st.status === 'failed' && st.error) {
+      text = t('status_failed_error', {err: st.error.substring(0, 80)});
+    } else if (st.status === 'idle' || !st.status) {
+      text = t('status_idle');
+    } else {
+      text = t('status_' + st.status);
+    }
+    bar.appendChild(dot);
+    bar.appendChild(document.createTextNode(' ' + text));
+
+    // Toggle run/retry buttons
+    var runBar = bar.closest('.chat-run-bar');
+    if (runBar) {
+      var btns = runBar.querySelectorAll('.btn');
+      for (var i = 0; i < btns.length; i++) {
+        btns[i].disabled = (st.status === 'running');
+      }
+    }
+  }
+
+  function loadChatTab(container) {
+    clearEl(container);
+    fetch('/api/workspaces').then(function(r) { return r.json(); }).then(function(workspaces) {
+      renderChatShell(container, workspaces);
+    }).catch(function(err) {
+      container.appendChild(el('div', {className: 'empty', textContent: t('error_generic', {err: String(err)})}));
+    });
+  }
+
+  function renderChatShell(container, workspaces) {
+    clearEl(container);
+
+    // Workspace bar
+    var wsBar = el('div', {className: 'ws-bar'});
+    var wsSelect = el('select', {id: 'ws-select'});
+    if (workspaces.length === 0) {
+      wsSelect.appendChild(el('option', {value: '', textContent: '-- ' + t('ws_no_workspaces') + ' --'}));
+    } else {
+      workspaces.forEach(function(ws) {
+        var opt = el('option', {value: ws.name, textContent: ws.name + ' (' + ws.path + ')'});
+        if (currentWorkspace && currentWorkspace === ws.name) opt.selected = true;
+        wsSelect.appendChild(opt);
+      });
+      if (!currentWorkspace) currentWorkspace = workspaces[0].name;
+    }
+
+    wsSelect.addEventListener('change', function() {
+      currentWorkspace = this.value;
+      if (currentWorkspace) loadChatContent(container);
+    });
+
+    wsBar.appendChild(wsSelect);
+
+    // New button
+    wsBar.appendChild(el('button', {className: 'btn btn-secondary btn-sm', textContent: t('ws_new'),
+      onclick: function() { showCreateWorkspaceForm(container); }
+    }));
+
+    // Delete button
+    if (workspaces.length > 0) {
+      wsBar.appendChild(el('button', {className: 'btn btn-danger btn-sm', textContent: t('ws_delete'),
+        onclick: function() {
+          if (!currentWorkspace) return;
+          if (!confirm(t('ws_confirm_delete', {name: currentWorkspace}))) return;
+          fetch('/api/workspace/delete', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name: currentWorkspace})
+          }).then(function(r) { return r.json(); }).then(function(res) {
+            if (res.ok) {
+              currentWorkspace = null;
+              loadChatTab(container);
+            }
+          });
+        }
+      }));
+    }
+
+    container.appendChild(wsBar);
+
+    if (!currentWorkspace || workspaces.length === 0) {
+      container.appendChild(el('div', {className: 'empty', textContent: t('ws_no_workspaces')}));
+      return;
+    }
+
+    loadChatContent(container);
+  }
+
+  function showCreateWorkspaceForm(container) {
+    var existing = document.getElementById('ws-create-area');
+    if (existing) { existing.remove(); return; }
+
+    var area = el('div', {id: 'ws-create-area', style: 'padding:10px 24px; background:#f9f9f9; border-bottom:1px solid #eee'});
+    var nameIn = el('input', {type: 'text', placeholder: t('ws_name'), style: 'width:150px'});
+    var pathIn = el('input', {type: 'text', placeholder: t('ws_path'), style: 'width:300px'});
+    var errDiv = el('div', {className: 'ws-error', id: 'ws-create-err'});
+
+    var form = el('div', {className: 'ws-create-form'}, [
+      nameIn, pathIn,
+      el('button', {className: 'btn btn-primary btn-sm', textContent: t('btn_save'), onclick: function() {
+        var name = nameIn.value.trim();
+        var path = pathIn.value.trim();
+        if (!name || !path) return;
+        fetch('/api/workspaces', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({name: name, path: path})
+        }).then(function(r) { return r.json(); }).then(function(res) {
+          if (res.ok) {
+            currentWorkspace = name;
+            loadChatTab(container);
+          } else {
+            errDiv.textContent = res.error || 'Error';
+          }
+        }).catch(function(err) { errDiv.textContent = String(err); });
+      }}),
+      el('button', {className: 'btn btn-secondary btn-sm', textContent: t('btn_cancel'), onclick: function() {
+        area.remove();
+      }})
+    ]);
+    area.appendChild(form);
+    area.appendChild(errDiv);
+
+    // Insert after ws-bar
+    var wsBar = container.querySelector('.ws-bar');
+    if (wsBar && wsBar.nextSibling) {
+      container.insertBefore(area, wsBar.nextSibling);
+    } else {
+      container.appendChild(area);
+    }
+  }
+
+  function loadChatContent(container) {
+    // Keep ws-bar, replace everything below it
+    var wsBar = container.querySelector('.ws-bar');
+    var siblings = [];
+    if (wsBar) {
+      var next = wsBar.nextSibling;
+      while (next) { siblings.push(next); next = next.nextSibling; }
+      siblings.forEach(function(s) { s.remove(); });
+    }
+
+    var chatWrap = el('div', {className: 'chat-container'});
+    container.appendChild(chatWrap);
+
+    Promise.all([
+      fetch('/api/workspace?name=' + encodeURIComponent(currentWorkspace)).then(function(r) { return r.json(); }),
+      fetch('/api/config').then(function(r) { return r.json(); })
+    ]).then(function(results) {
+      var ws = results[0];
+      var config = results[1];
+      if (ws.error) {
+        chatWrap.appendChild(el('div', {className: 'empty', textContent: ws.error}));
+        return;
+      }
+
+      // Build set of existing task IDs for "Created" state
+      var existingIds = {};
+      var projects = config.projects || {};
+      Object.keys(projects).forEach(function(pn) {
+        var tasks = projects[pn].tasks || [];
+        tasks.forEach(function(tk) {
+          existingIds[pn + ':' + tk.id] = true;
+        });
+      });
+
+      // Store workspace path for task creation (needed when project not yet in YAML)
+      var wsPath = ws.path || '';
+
+      // Messages area
+      var msgsDiv = el('div', {className: 'chat-messages', id: 'chat-messages'});
+      var messages = ws.messages || [];
+      if (messages.length === 0) {
+        msgsDiv.appendChild(el('div', {className: 'empty', style: 'padding:40px 0', textContent: t('chat_empty')}));
+      } else {
+        messages.forEach(function(msg) {
+          msgsDiv.appendChild(renderChatMessage(msg, existingIds, wsPath));
+        });
+      }
+      chatWrap.appendChild(msgsDiv);
+
+      // Run controls + status bar
+      var chatRunStatus = el('span', {id: 'chat-run-bar', style: 'display:flex;align-items:center;gap:4px;margin-left:auto'}, [
+        el('span', {className: 'dot dot-idle'}),
+        document.createTextNode(' ' + t('status_idle'))
+      ]);
+      var chatRunBtn = el('button', {className: 'btn btn-primary btn-sm', textContent: t('btn_run_all'),
+        onclick: function() {
+          chatRunBtn.disabled = true;
+          chatRetryBtn.disabled = true;
+          fetch('/api/run', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({mode: 'run', project: currentWorkspace})
+          }).then(function(r) { return r.json(); }).then(function(res) {
+            if (res.ok) {
+              updateChatRunBar(res);
+              startChatPoll();
+            } else {
+              chatRunBtn.disabled = false;
+              chatRetryBtn.disabled = false;
+            }
+          });
+        }
+      });
+      var chatRetryBtn = el('button', {className: 'btn btn-secondary btn-sm', textContent: t('btn_retry_latest'),
+        onclick: function() {
+          chatRunBtn.disabled = true;
+          chatRetryBtn.disabled = true;
+          fetch('/api/run', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({mode: 'retry', project: currentWorkspace})
+          }).then(function(r) { return r.json(); }).then(function(res) {
+            if (res.ok) {
+              updateChatRunBar(res);
+              startChatPoll();
+            } else {
+              chatRunBtn.disabled = false;
+              chatRetryBtn.disabled = false;
+            }
+          });
+        }
+      });
+      var runBar = el('div', {className: 'chat-run-bar'}, [
+        chatRunBtn, chatRetryBtn, chatRunStatus
+      ]);
+      chatWrap.appendChild(runBar);
+
+      // Fetch initial run status
+      fetch('/api/run-status').then(function(r) { return r.json(); }).then(function(st) {
+        updateChatRunBar(st);
+        if (st.status === 'running') startChatPoll();
+      });
+
+      // Input bar
+      var inputBar = el('div', {className: 'chat-input-bar'});
+      var textarea = el('textarea', {placeholder: t('chat_placeholder'), rows: '1'});
+      textarea.addEventListener('input', function() {
+        this.style.height = 'auto';
+        this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+      });
+      textarea.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          sendBtn.click();
+        }
+      });
+
+      var sendBtn = el('button', {className: 'btn btn-primary', textContent: t('chat_send'), onclick: function() {
+        var msg = textarea.value.trim();
+        if (!msg) return;
+        sendChatMessage(currentWorkspace, msg, msgsDiv, textarea, sendBtn, existingIds, wsPath);
+      }});
+
+      inputBar.appendChild(textarea);
+      inputBar.appendChild(sendBtn);
+      chatWrap.appendChild(inputBar);
+
+      // Scroll to bottom
+      setTimeout(function() { msgsDiv.scrollTop = msgsDiv.scrollHeight; }, 50);
+    });
+  }
+
+  function renderChatMessage(msg, existingIds, wsPath) {
+    var role = msg.role || 'user';
+    var msgDiv = el('div', {className: 'chat-msg ' + role});
+
+    var bubble = el('div', {className: 'msg-bubble'});
+    bubble.textContent = msg.content || '';
+    msgDiv.appendChild(bubble);
+
+    // Timestamp
+    if (msg.ts) {
+      var ts = msg.ts.split('T')[1] || msg.ts;
+      if (ts.length > 8) ts = ts.substring(0, 8);
+      msgDiv.appendChild(el('div', {className: 'msg-ts', textContent: ts}));
+    }
+
+    // Task cards for assistant messages
+    if (role === 'assistant' && msg.tasks && msg.tasks.length > 0) {
+      msg.tasks.forEach(function(task) {
+        msgDiv.appendChild(renderTaskSuggest(task, existingIds, wsPath));
+      });
+    }
+
+    return msgDiv;
+  }
+
+  function renderTaskSuggest(task, existingIds, wsPath) {
+    var isValid = task.valid;
+    var card = el('div', {className: 'task-suggest' + (isValid ? '' : ' invalid')});
+
+    card.appendChild(el('div', {className: 'task-field'}, [
+      el('strong', {textContent: t('label_id') + ': '}), task.id || '?'
+    ]));
+    card.appendChild(el('div', {className: 'task-field'}, [
+      el('strong', {textContent: t('label_tool') + ': '}), task.tool || '?'
+    ]));
+    card.appendChild(el('div', {className: 'task-field'}, [
+      el('strong', {textContent: t('label_prompt') + ': '}), (task.prompt || '').substring(0, 200)
+    ]));
+    if (task.depends_on && task.depends_on.length > 0) {
+      card.appendChild(el('div', {className: 'task-field'}, [
+        el('strong', {textContent: t('label_depends_on') + ': '}), task.depends_on.join(', ')
+      ]));
+    }
+    if (task.review_of) {
+      card.appendChild(el('div', {className: 'task-field'}, [
+        el('strong', {textContent: t('label_review_of') + ': '}), task.review_of
+      ]));
+    }
+
+    var globalId = currentWorkspace + ':' + task.id;
+    var alreadyCreated = existingIds[globalId];
+
+    if (!isValid) {
+      card.appendChild(el('div', {className: 'ws-error', textContent: task.error || t('task_invalid')}));
+    } else if (alreadyCreated) {
+      card.appendChild(el('div', {style: 'margin-top:6px; color:#27ae60; font-size:12px; font-weight:600',
+        textContent: '\u2713 ' + t('task_created')}));
+    } else {
+      var btnArea = el('div', {style: 'margin-top:6px'});
+      var createBtn = el('button', {className: 'btn btn-primary btn-sm', textContent: t('task_create_btn'),
+        onclick: function() {
+          createBtn.disabled = true;
+          createBtn.textContent = t('loading');
+          fetch('/api/config/tasks', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              project: currentWorkspace,
+              project_path: wsPath,
+              id: task.id,
+              prompt: task.prompt,
+              tool: task.tool,
+              depends_on: task.depends_on || [],
+              review_of: task.review_of || ''
+            })
+          }).then(function(r) { return r.json(); }).then(function(res) {
+            if (res.ok) {
+              existingIds[globalId] = true;
+              clearEl(btnArea);
+              btnArea.appendChild(el('span', {style: 'color:#27ae60; font-size:12px; font-weight:600',
+                textContent: '\u2713 ' + t('task_created')}));
+            } else {
+              createBtn.disabled = false;
+              var errMsg = (res.errors || ['Error']).join('; ');
+              createBtn.textContent = t('task_create_btn');
+              var errEl = btnArea.querySelector('.ws-error');
+              if (!errEl) {
+                errEl = el('div', {className: 'ws-error'});
+                btnArea.appendChild(errEl);
+              }
+              errEl.textContent = errMsg;
+            }
+          }).catch(function(err) {
+            createBtn.disabled = false;
+            createBtn.textContent = t('task_create_btn');
+          });
+        }
+      });
+      btnArea.appendChild(createBtn);
+      card.appendChild(btnArea);
+    }
+
+    return card;
+  }
+
+  function sendChatMessage(name, message, msgsDiv, textarea, sendBtn, existingIds, wsPath) {
+    // Clear empty placeholder
+    var emptyEl = msgsDiv.querySelector('.empty');
+    if (emptyEl) emptyEl.remove();
+
+    // Append user bubble
+    var userMsg = {role: 'user', content: message, ts: new Date().toISOString()};
+    msgsDiv.appendChild(renderChatMessage(userMsg, existingIds, wsPath));
+
+    // Clear input
+    textarea.value = '';
+    textarea.style.height = 'auto';
+    sendBtn.disabled = true;
+
+    // Show thinking indicator
+    var thinkDiv = el('div', {className: 'chat-msg assistant', id: 'thinking-indicator'});
+    var thinkBubble = el('div', {className: 'thinking-bubble'});
+    var dots = el('span', {className: 'thinking-dots'}, [
+      el('span', {textContent: '.'}), el('span', {textContent: '.'}), el('span', {textContent: '.'})
+    ]);
+    thinkBubble.appendChild(document.createTextNode(t('chat_thinking') + ' '));
+    thinkBubble.appendChild(dots);
+    thinkDiv.appendChild(thinkBubble);
+    msgsDiv.appendChild(thinkDiv);
+    msgsDiv.scrollTop = msgsDiv.scrollHeight;
+
+    fetch('/api/workspace/chat', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: name, message: message})
+    }).then(function(r) { return r.json(); }).then(function(res) {
+      // Remove thinking indicator
+      var indicator = document.getElementById('thinking-indicator');
+      if (indicator) indicator.remove();
+      sendBtn.disabled = false;
+
+      if (res.ok) {
+        var assistantMsg = {role: 'assistant', content: res.reply, tasks: res.tasks, ts: new Date().toISOString()};
+        msgsDiv.appendChild(renderChatMessage(assistantMsg, existingIds, wsPath));
+      } else {
+        var errMsg = {role: 'assistant', content: t('chat_error', {err: res.error || 'Unknown'}), ts: new Date().toISOString()};
+        msgsDiv.appendChild(renderChatMessage(errMsg, existingIds, wsPath));
+      }
+      msgsDiv.scrollTop = msgsDiv.scrollHeight;
+    }).catch(function(err) {
+      var indicator = document.getElementById('thinking-indicator');
+      if (indicator) indicator.remove();
+      sendBtn.disabled = false;
+      var errMsg = {role: 'assistant', content: t('chat_error', {err: String(err)}), ts: new Date().toISOString()};
+      msgsDiv.appendChild(renderChatMessage(errMsg, existingIds, wsPath));
+      msgsDiv.scrollTop = msgsDiv.scrollHeight;
+    });
   }
 
   /* ------ Init ------ */
