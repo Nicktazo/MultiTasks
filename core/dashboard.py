@@ -259,7 +259,9 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self._send_json(200, {"ok": True, "run": run_data, "events": events, "errors": []})
 
     def _serve_log(self, log_path: str | None) -> None:
-        _MAX_LOG = 102_400  # 100 KB
+        import re
+        _MAX_RESULT = 102_400  # 100 KB cap on result text
+        _MAX_RAW = 10_485_760  # 10 MB hard cap on raw file read
         if not log_path:
             self._send_json(400, {"ok": False, "error": "Missing 'path' parameter"})
             return
@@ -286,13 +288,66 @@ class _DashboardHandler(BaseHTTPRequestHandler):
 
         try:
             with open(resolved, "r", encoding="utf-8", errors="replace") as f:
-                content = f.read(_MAX_LOG + 1)
-            truncated = len(content) > _MAX_LOG
-            if truncated:
-                content = content[:_MAX_LOG]
-            self._send_json(200, {"ok": True, "content": content, "truncated": truncated})
+                raw = f.read(_MAX_RAW)
         except OSError as e:
             self._send_json(500, {"ok": False, "error": str(e)})
+            return
+
+        # Try to parse Claude CLI output format and return structured data
+        parsed = self._parse_claude_log(raw, _MAX_RESULT)
+        if parsed:
+            self._send_json(200, parsed)
+        else:
+            # Fallback: return raw content with truncation
+            truncated = len(raw) > _MAX_RESULT
+            if truncated:
+                raw = raw[:_MAX_RESULT]
+            self._send_json(200, {"ok": True, "format": "raw",
+                                  "content": raw, "truncated": truncated})
+
+    @staticmethod
+    def _parse_claude_log(raw: str, max_result: int) -> dict | None:
+        """Parse Claude CLI log format into structured response."""
+        import re
+        m = re.search(r"=== STDOUT ===\s*\n(.*?)(?:\n\s*=== STDERR ===|$)",
+                      raw, re.DOTALL)
+        if not m:
+            return None
+        json_str = m.group(1).strip()
+        try:
+            data = json.loads(json_str)
+        except (json.JSONDecodeError, ValueError):
+            return None
+        if not isinstance(data, dict) or data.get("type") != "result":
+            return None
+
+        result_text = data.get("result", "")
+        truncated = len(result_text) > max_result
+        if truncated:
+            result_text = result_text[:max_result]
+
+        # Extract stderr
+        sm = re.search(r"=== STDERR ===\s*\n(.*)", raw, re.DOTALL)
+        stderr = sm.group(1).strip() if sm else ""
+        if stderr == "(empty)":
+            stderr = ""
+
+        # Build structured response
+        meta: dict = {
+            "is_ok": data.get("subtype") == "success" and not data.get("is_error"),
+        }
+        if data.get("duration_ms") is not None:
+            meta["duration_s"] = round(data["duration_ms"] / 1000)
+        if data.get("num_turns") is not None:
+            meta["num_turns"] = data["num_turns"]
+        if data.get("total_cost_usd") is not None:
+            meta["cost_usd"] = round(data["total_cost_usd"], 4)
+        if data.get("modelUsage"):
+            meta["models"] = list(data["modelUsage"].keys())
+
+        return {"ok": True, "format": "claude", "meta": meta,
+                "result": result_text, "stderr": stderr,
+                "truncated": truncated}
 
     def _load_event_log(self, run_id: str) -> list[dict]:
         event_path = os.path.join(self.state_dir, f"{run_id}.events.jsonl")

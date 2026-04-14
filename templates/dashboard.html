@@ -270,7 +270,8 @@
       help_run_all: 'Run all tasks in dependency order',
       help_retry_latest: 'Re-run only failed/skipped tasks from latest run',
       btn_view_log: 'View Log', btn_hide_log: 'Hide Log',
-      log_truncated: '(truncated at 100 KB)', log_load_failed: 'Failed to load log'
+      log_truncated: '(truncated at 100 KB)', log_load_failed: 'Failed to load log',
+      log_status_ok: 'OK', log_status_err: 'ERROR', log_turns: 'turns', log_stderr: 'STDERR'
     },
     zh: {
       title: 'MultiTasks \u63a7\u5236\u53f0',
@@ -328,7 +329,8 @@
       help_run_all: '\u6309\u4f9d\u8d56\u987a\u5e8f\u8fd0\u884c\u6240\u6709\u4efb\u52a1',
       help_retry_latest: '\u4ec5\u91cd\u8dd1\u6700\u8fd1\u4e00\u6b21\u5931\u8d25/\u8df3\u8fc7\u7684\u4efb\u52a1',
       btn_view_log: '\u67e5\u770b\u65e5\u5fd7', btn_hide_log: '\u6536\u8d77\u65e5\u5fd7',
-      log_truncated: '(\u5df2\u622a\u65ad\uff0c\u6700\u5927 100 KB)', log_load_failed: '\u52a0\u8f7d\u65e5\u5fd7\u5931\u8d25'
+      log_truncated: '(\u5df2\u622a\u65ad\uff0c\u6700\u5927 100 KB)', log_load_failed: '\u52a0\u8f7d\u65e5\u5fd7\u5931\u8d25',
+      log_status_ok: '\u6210\u529f', log_status_err: '\u5931\u8d25', log_turns: '\u8f6e', log_stderr: '\u9519\u8bef\u8f93\u51fa'
     }
   };
 
@@ -649,55 +651,44 @@
     });
   }
 
-  function formatLogContent(content) {
-    var stdoutMatch = content.match(/=== STDOUT ===\s*\n([\s\S]*?)(?:\n\s*=== STDERR ===|$)/);
-    if (!stdoutMatch) return null;
-    var jsonStr = stdoutMatch[1].trim();
-    var stderrMatch = content.match(/=== STDERR ===\s*\n([\s\S]*)$/);
-    var stderr = stderrMatch ? stderrMatch[1].trim() : '';
-
-    var data;
-    try { data = JSON.parse(jsonStr); } catch(e) { return null; }
-    if (!data || data.type !== 'result') return null;
-
-    var container = el('div', {className: 'log-panel log-formatted'});
-
-    // Metadata bar
-    var isOk = data.subtype === 'success' && !data.is_error;
-    var statusTag = el('span', {className: 'tag ' + (isOk ? 'tag-ok' : 'tag-err'),
-      textContent: isOk ? '\u2713 OK' : '\u2717 ERROR'});
-    var metaParts = [];
-    if (data.duration_ms) metaParts.push(Math.round(data.duration_ms / 1000) + 's');
-    if (data.num_turns) metaParts.push(data.num_turns + ' turns');
-    if (data.total_cost_usd != null) metaParts.push('$' + data.total_cost_usd.toFixed(4));
-    if (data.modelUsage) {
-      var models = Object.keys(data.modelUsage).map(function(m) {
-        return m.replace('claude-', '').replace(/-\d{8}$/, '');
-      });
-      metaParts.push(models.join(' + '));
+  function buildLogPanel(res) {
+    if (res.format === 'claude') {
+      var container = el('div', {className: 'log-panel log-formatted'});
+      var m = res.meta || {};
+      // Metadata bar
+      var statusTag = el('span', {className: 'tag ' + (m.is_ok ? 'tag-ok' : 'tag-err'),
+        textContent: m.is_ok ? ('\u2713 ' + t('log_status_ok')) : ('\u2717 ' + t('log_status_err'))});
+      var metaParts = [];
+      if (m.duration_s != null) metaParts.push(m.duration_s + 's');
+      if (m.num_turns != null) metaParts.push(m.num_turns + ' ' + t('log_turns'));
+      if (m.cost_usd != null) metaParts.push('$' + m.cost_usd.toFixed(4));
+      if (m.models) {
+        metaParts.push(m.models.map(function(n) {
+          return n.replace('claude-', '').replace(/-\d{8}$/, '');
+        }).join(' + '));
+      }
+      var metaBar = el('div', {className: 'log-meta'}, [statusTag]);
+      if (metaParts.length) {
+        metaBar.appendChild(document.createTextNode(' \u00b7 ' + metaParts.join(' \u00b7 ')));
+      }
+      container.appendChild(metaBar);
+      if (res.result) {
+        var resultPre = el('pre', {className: 'log-result'});
+        resultPre.textContent = res.result;
+        container.appendChild(resultPre);
+      }
+      if (res.stderr) {
+        container.appendChild(el('div', {className: 'log-stderr-label', textContent: t('log_stderr')}));
+        var stderrPre = el('pre', {className: 'log-result log-stderr'});
+        stderrPre.textContent = res.stderr;
+        container.appendChild(stderrPre);
+      }
+      return container;
     }
-    var metaBar = el('div', {className: 'log-meta'}, [statusTag]);
-    if (metaParts.length) {
-      metaBar.appendChild(document.createTextNode(' \u00b7 ' + metaParts.join(' \u00b7 ')));
-    }
-    container.appendChild(metaBar);
-
-    // Result text
-    if (data.result) {
-      var resultPre = el('pre', {className: 'log-result'});
-      resultPre.textContent = data.result;
-      container.appendChild(resultPre);
-    }
-
-    // Stderr (if non-empty)
-    if (stderr && stderr !== '(empty)') {
-      container.appendChild(el('div', {className: 'log-stderr-label', textContent: 'STDERR'}));
-      var stderrPre = el('pre', {className: 'log-result log-stderr'});
-      stderrPre.textContent = stderr;
-      container.appendChild(stderrPre);
-    }
-
-    return container;
+    // Raw fallback
+    var pre = el('pre', {className: 'log-panel'});
+    pre.textContent = res.content;
+    return pre;
   }
 
   function renderRunState(container, data, runs, events) {
@@ -786,13 +777,7 @@
                     setTimeout(function() { btn.textContent = t('btn_view_log'); }, 2000);
                     return;
                   }
-                  var formatted = formatLogContent(res.content);
-                  if (formatted) {
-                    panel = formatted;
-                  } else {
-                    panel = el('pre', {className: 'log-panel'});
-                    panel.textContent = res.content;
-                  }
+                  panel = buildLogPanel(res);
                   if (res.truncated) {
                     panel.appendChild(el('span', {className: 'log-truncated', textContent: '\n' + t('log_truncated')}));
                   }
