@@ -176,6 +176,12 @@
   .event-tid { color: #555; font-family: monospace; font-size: 12px; min-width: 120px; }
   .event-msg { color: #666; flex: 1; }
   .no-events { color: #999; font-size: 13px; font-style: italic; padding: 8px 0; }
+
+  .log-panel { background:#1e1e1e; color:#d4d4d4; font-family:monospace;
+    font-size:12px; line-height:1.5; padding:10px 12px; border-radius:4px;
+    margin-top:8px; max-height:400px; overflow:auto; white-space:pre-wrap;
+    word-break:break-all; grid-column:1/-1; }
+  .log-panel .log-truncated { color:#e6a23c; font-style:italic; }
 </style>
 </head>
 <body>
@@ -249,7 +255,9 @@
       help_review_of: 'Task ID being reviewed, creates implicit dependency',
       help_validate: 'Check config validity and show execution order',
       help_run_all: 'Run all tasks in dependency order',
-      help_retry_latest: 'Re-run only failed/skipped tasks from latest run'
+      help_retry_latest: 'Re-run only failed/skipped tasks from latest run',
+      btn_view_log: 'View Log', btn_hide_log: 'Hide Log',
+      log_truncated: '(truncated at 100 KB)', log_load_failed: 'Failed to load log'
     },
     zh: {
       title: 'MultiTasks \u63a7\u5236\u53f0',
@@ -305,7 +313,9 @@
       help_review_of: '\u88abreview\u7684\u4efb\u52a1ID\uff0c\u521b\u5efa\u9690\u5f0f\u4f9d\u8d56',
       help_validate: '\u68c0\u67e5\u914d\u7f6e\u5408\u6cd5\u6027\u5e76\u663e\u793a\u6267\u884c\u987a\u5e8f',
       help_run_all: '\u6309\u4f9d\u8d56\u987a\u5e8f\u8fd0\u884c\u6240\u6709\u4efb\u52a1',
-      help_retry_latest: '\u4ec5\u91cd\u8dd1\u6700\u8fd1\u4e00\u6b21\u5931\u8d25/\u8df3\u8fc7\u7684\u4efb\u52a1'
+      help_retry_latest: '\u4ec5\u91cd\u8dd1\u6700\u8fd1\u4e00\u6b21\u5931\u8d25/\u8df3\u8fc7\u7684\u4efb\u52a1',
+      btn_view_log: '\u67e5\u770b\u65e5\u5fd7', btn_hide_log: '\u6536\u8d77\u65e5\u5fd7',
+      log_truncated: '(\u5df2\u622a\u65ad\uff0c\u6700\u5927 100 KB)', log_load_failed: '\u52a0\u8f7d\u65e5\u5fd7\u5931\u8d25'
     }
   };
 
@@ -689,7 +699,47 @@
         var details = el('div', {className: 'task-details'});
         if (tk.duration_s != null) details.appendChild(el('span', {textContent: t('detail_duration', {s: tk.duration_s})}));
         if (tk.git_baseline) details.appendChild(el('span', {textContent: t('detail_baseline', {hash: tk.git_baseline.substring(0, 8)})}));
-        if (tk.log_file) details.appendChild(el('span', {textContent: t('detail_log', {path: tk.log_file})}));
+        if (tk.log_file) {
+          var logBtn = el('button', {className: 'btn btn-secondary btn-sm', textContent: t('btn_view_log')});
+          (function(btn, logFile, parentCard) {
+            var panel = null;
+            var loaded = false;
+            btn.addEventListener('click', function() {
+              if (panel) {
+                var visible = panel.style.display !== 'none';
+                panel.style.display = visible ? 'none' : '';
+                btn.textContent = visible ? t('btn_view_log') : t('btn_hide_log');
+                return;
+              }
+              btn.disabled = true;
+              btn.textContent = t('loading');
+              fetch('/api/log?path=' + encodeURIComponent(logFile))
+                .then(function(r) { return r.json(); })
+                .then(function(res) {
+                  btn.disabled = false;
+                  if (!res.ok) {
+                    btn.textContent = t('log_load_failed');
+                    setTimeout(function() { btn.textContent = t('btn_view_log'); }, 2000);
+                    return;
+                  }
+                  panel = el('pre', {className: 'log-panel'});
+                  panel.textContent = res.content;
+                  if (res.truncated) {
+                    panel.appendChild(el('span', {className: 'log-truncated', textContent: '\n' + t('log_truncated')}));
+                  }
+                  parentCard.appendChild(panel);
+                  btn.textContent = t('btn_hide_log');
+                  loaded = true;
+                })
+                .catch(function() {
+                  btn.disabled = false;
+                  btn.textContent = t('log_load_failed');
+                  setTimeout(function() { btn.textContent = t('btn_view_log'); }, 2000);
+                });
+            });
+          })(logBtn, tk.log_file, card);
+          details.appendChild(logBtn);
+        }
         card.appendChild(details);
         if (tk.error) card.appendChild(el('div', {className: 'error', textContent: tk.error}));
         group.appendChild(card);

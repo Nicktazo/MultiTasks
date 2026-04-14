@@ -56,6 +56,9 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             self._serve_run_detail(run_id)
         elif path == "/api/latest-run-detail":
             self._serve_run_detail(None)
+        elif path == "/api/log":
+            log_path = params.get("path", [None])[0]
+            self._serve_log(log_path)
         elif path == "/api/events":
             self._serve_events()
         else:
@@ -254,6 +257,42 @@ class _DashboardHandler(BaseHTTPRequestHandler):
 
         events = self._load_event_log(run_id)
         self._send_json(200, {"ok": True, "run": run_data, "events": events, "errors": []})
+
+    def _serve_log(self, log_path: str | None) -> None:
+        _MAX_LOG = 102_400  # 100 KB
+        if not log_path:
+            self._send_json(400, {"ok": False, "error": "Missing 'path' parameter"})
+            return
+
+        # Resolve relative to the project root (parent of core/)
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        candidate = os.path.join(project_root, log_path)
+
+        # Security: realpath resolves symlinks, preventing symlink escape
+        resolved = os.path.realpath(candidate)
+        logs_dir = os.path.realpath(os.path.join(project_root, "logs"))
+        try:
+            common = os.path.commonpath([resolved, logs_dir])
+        except ValueError:
+            # Different drives on Windows
+            common = ""
+        if common != logs_dir:
+            self._send_json(403, {"ok": False, "error": "Access denied"})
+            return
+
+        if not os.path.isfile(resolved):
+            self._send_json(404, {"ok": False, "error": "Log file not found"})
+            return
+
+        try:
+            with open(resolved, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read(_MAX_LOG + 1)
+            truncated = len(content) > _MAX_LOG
+            if truncated:
+                content = content[:_MAX_LOG]
+            self._send_json(200, {"ok": True, "content": content, "truncated": truncated})
+        except OSError as e:
+            self._send_json(500, {"ok": False, "error": str(e)})
 
     def _load_event_log(self, run_id: str) -> list[dict]:
         event_path = os.path.join(self.state_dir, f"{run_id}.events.jsonl")
