@@ -187,9 +187,39 @@ def _run_codex_review(prompt: str, cwd: str, timeout: int, env: dict,
         return -2, "", "codex command not found"
 
 
+_MAX_REVIEW_FILE = 200_000  # 200KB cap
+
+
+def _run_codex_review_file(prompt: str, cwd: str, timeout: int, env: dict,
+                           review_file: str) -> tuple[int, str, str]:
+    """Run codex review on a specific file's content."""
+    path = review_file if os.path.isabs(review_file) else os.path.join(cwd, review_file)
+    if not os.path.isfile(path):
+        return -3, "", f"Review file not found: {review_file}"
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        content = f.read(_MAX_REVIEW_FILE)
+    if not content.strip():
+        return -4, "", f"Review file is empty: {review_file}"
+    constructed_prompt = (
+        f"{prompt}\n\n"
+        f"Review target: {review_file}\n"
+        f"Content:\n{content}"
+    )
+    cmd = ["codex", "exec", constructed_prompt, "--full-auto", "--json"]
+    try:
+        r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
+                           timeout=timeout, env=env)
+        return r.returncode, r.stdout, r.stderr
+    except subprocess.TimeoutExpired:
+        return -1, "", f"Timeout after {timeout}s"
+    except FileNotFoundError:
+        return -2, "", "codex command not found"
+
+
 def run_task(tool: str, prompt: str, cwd: str, timeout: int,
              log_dir: str, run_id: str, task_id: str,
-             snapshot: GitSnapshot, baseline_commit: str | None = None) -> RunResult:
+             snapshot: GitSnapshot, baseline_commit: str | None = None,
+             review_file: str | None = None) -> RunResult:
     """Unified task execution entry point.
 
     Dispatches to tool-specific runner, writes log file, returns RunResult.
@@ -203,7 +233,10 @@ def run_task(tool: str, prompt: str, cwd: str, timeout: int,
     elif tool == "codex":
         exit_code, stdout, stderr = _run_codex(prompt, cwd, timeout, env)
     elif tool == "codex-review":
-        exit_code, stdout, stderr = _run_codex_review(prompt, cwd, timeout, env, baseline_commit)
+        if review_file:
+            exit_code, stdout, stderr = _run_codex_review_file(prompt, cwd, timeout, env, review_file)
+        else:
+            exit_code, stdout, stderr = _run_codex_review(prompt, cwd, timeout, env, baseline_commit)
     else:
         exit_code, stdout, stderr = -2, "", f"Unknown tool: {tool}"
 

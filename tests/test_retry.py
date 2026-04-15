@@ -80,7 +80,7 @@ def _fake_run_task_factory(results=None, log_tracker=None):
     results = results or {}
 
     def fake(tool, prompt, cwd, timeout, log_dir, run_id, task_id,
-             snapshot, baseline_commit=None):
+             snapshot, baseline_commit=None, review_file=None):
         if log_tracker:
             log_tracker.record(task_id)
         if task_id in results:

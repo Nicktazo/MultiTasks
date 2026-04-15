@@ -83,7 +83,7 @@ def _fake_run_task_factory(
     results = results or {}
 
     def fake_run_task(tool, prompt, cwd, timeout, log_dir, run_id, task_id,
-                      snapshot, baseline_commit=None):
+                      snapshot, baseline_commit=None, review_file=None):
         start = time.monotonic()
         if delay:
             time.sleep(delay)
@@ -275,7 +275,7 @@ def test_skipped_task_releases_downstream(tmp_workspace):
 
 def test_worker_exception_becomes_failure(tmp_workspace):
     def exploding_run_task(tool, prompt, cwd, timeout, log_dir, run_id, task_id,
-                           snapshot, baseline_commit=None):
+                           snapshot, baseline_commit=None, review_file=None):
         if task_id == "projA:t1":
             raise RuntimeError("boom")
         log_path = os.path.join(log_dir, run_id, task_id.replace(":", "__") + ".log")
@@ -428,3 +428,104 @@ def test_codex_review_no_diff_is_skipped(tmp_workspace):
     assert state.tasks["projA:impl"].status == DONE
     assert state.tasks["projA:review"].status == SKIPPED
     assert "nothing to review" in state.tasks["projA:review"].error.lower()
+
+
+# ---------------------------------------------------------------------------
+# Test 11: codex-review with file path review_of passes review_file to runner
+# ---------------------------------------------------------------------------
+
+def test_codex_review_file_path(tmp_workspace):
+    """File path review_of should pass review_file (not baseline) to run_task."""
+    captured = {}
+
+    def spy_run_task(tool, prompt, cwd, timeout, log_dir, run_id, task_id,
+                     snapshot, baseline_commit=None, review_file=None):
+        captured["baseline_commit"] = baseline_commit
+        captured["review_file"] = review_file
+        log_path = os.path.join(log_dir, run_id, task_id.replace(":", "__") + ".log")
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(log_path, "w") as f:
+            f.write("ok\n")
+        return RunResult(exit_code=0, success=True, log_file=log_path)
+
+    cfg_path = _make_config_file(tmp_workspace, {
+        "projA": {
+            "path": os.path.join(tmp_workspace, "projA"),
+            "tasks": [
+                {"id": "review-plan", "prompt": "Review plan",
+                 "tool": "codex-review", "review_of": "docs/plan.md"},
+            ],
+        },
+    }, {"max_parallel": 1, "notify": "none",
+        "state_dir": os.path.join(tmp_workspace, "state"),
+        "log_dir": os.path.join(tmp_workspace, "logs")})
+
+    config = load_config(cfg_path)
+
+    with patch("core.scheduler.run_task", spy_run_task), \
+         patch("core.scheduler.capture_git_snapshot", _fake_snapshot_factory()):
+        state = run_pipeline(config)
+
+    assert state.tasks["projA:review-plan"].status == DONE
+    assert captured["review_file"] == "docs/plan.md"
+    assert captured["baseline_commit"] is None
+
+
+# ---------------------------------------------------------------------------
+# Test 12: file review — file not found becomes FAILED with stderr message
+# ---------------------------------------------------------------------------
+
+def test_codex_review_file_not_found(tmp_workspace):
+    not_found = RunResult(exit_code=-3, stderr="Review file not found: missing.md",
+                          success=False, log_file="f.log")
+
+    cfg_path = _make_config_file(tmp_workspace, {
+        "projA": {
+            "path": os.path.join(tmp_workspace, "projA"),
+            "tasks": [
+                {"id": "review-missing", "prompt": "Review",
+                 "tool": "codex-review", "review_of": "missing.md"},
+            ],
+        },
+    }, {"max_parallel": 1, "notify": "none",
+        "state_dir": os.path.join(tmp_workspace, "state"),
+        "log_dir": os.path.join(tmp_workspace, "logs")})
+
+    config = load_config(cfg_path)
+
+    with patch("core.scheduler.run_task", _fake_run_task_factory(results={"projA:review-missing": not_found})), \
+         patch("core.scheduler.capture_git_snapshot", _fake_snapshot_factory()):
+        state = run_pipeline(config)
+
+    assert state.tasks["projA:review-missing"].status == FAILED
+    assert "not found" in state.tasks["projA:review-missing"].error.lower()
+
+
+# ---------------------------------------------------------------------------
+# Test 13: file review — empty file becomes SKIPPED
+# ---------------------------------------------------------------------------
+
+def test_codex_review_file_empty(tmp_workspace):
+    empty_file = RunResult(exit_code=-4, stderr="Review file is empty: empty.md",
+                           success=False, log_file="f.log")
+
+    cfg_path = _make_config_file(tmp_workspace, {
+        "projA": {
+            "path": os.path.join(tmp_workspace, "projA"),
+            "tasks": [
+                {"id": "review-empty", "prompt": "Review",
+                 "tool": "codex-review", "review_of": "empty.md"},
+            ],
+        },
+    }, {"max_parallel": 1, "notify": "none",
+        "state_dir": os.path.join(tmp_workspace, "state"),
+        "log_dir": os.path.join(tmp_workspace, "logs")})
+
+    config = load_config(cfg_path)
+
+    with patch("core.scheduler.run_task", _fake_run_task_factory(results={"projA:review-empty": empty_file})), \
+         patch("core.scheduler.capture_git_snapshot", _fake_snapshot_factory()):
+        state = run_pipeline(config)
+
+    assert state.tasks["projA:review-empty"].status == SKIPPED
+    assert "empty" in state.tasks["projA:review-empty"].error.lower()

@@ -319,3 +319,62 @@ def test_update_project_path(tmp_workspace):
 
     assert result["ok"] is True
     assert result["config"]["projects"]["projA"]["path"] == new_path
+
+
+# ---------------------------------------------------------------------------
+# Test 13: file path review_of validates and round-trips correctly
+# ---------------------------------------------------------------------------
+
+def test_file_path_review_of_validates(tmp_workspace):
+    """File path review_of should pass validation without depends_on."""
+    data = {
+        "projects": {
+            "projA": {
+                "path": os.path.join(tmp_workspace, "projA"),
+                "tasks": [
+                    {"id": "review-plan", "prompt": "Review this plan",
+                     "tool": "codex-review", "review_of": ".plan/weight-volume-calc.md"},
+                ],
+            },
+        },
+        "settings": {
+            "max_parallel": 1, "timeout": 600, "notify": "none",
+            "dashboard_port": 8704,
+            "state_dir": os.path.join(tmp_workspace, "state"),
+            "log_dir": os.path.join(tmp_workspace, "logs"),
+            "dirty_workspace": "warn",
+        },
+    }
+    cfg_path = _write_config(tmp_workspace, data)
+    config = load_config(cfg_path)
+
+    task = config.tasks["projA:review-plan"]
+    assert task.review_of == ".plan/weight-volume-calc.md"
+
+
+def test_file_path_review_of_roundtrip(tmp_workspace):
+    """File path review_of should survive config_to_dict round-trip."""
+    data = {
+        "projects": {
+            "projA": {
+                "path": os.path.join(tmp_workspace, "projA"),
+                "tasks": [
+                    {"id": "review-plan", "prompt": "Review plan",
+                     "tool": "codex-review", "review_of": "docs/plan.md"},
+                ],
+            },
+        },
+        "settings": {
+            "max_parallel": 1, "timeout": 600, "notify": "none",
+            "dashboard_port": 8704,
+            "state_dir": os.path.join(tmp_workspace, "state"),
+            "log_dir": os.path.join(tmp_workspace, "logs"),
+            "dirty_workspace": "warn",
+        },
+    }
+    cfg_path = _write_config(tmp_workspace, data)
+    config = load_config(cfg_path)
+    result = config_to_dict(config)
+
+    task_dict = result["projects"]["projA"]["tasks"][0]
+    assert task_dict["review_of"] == "docs/plan.md"

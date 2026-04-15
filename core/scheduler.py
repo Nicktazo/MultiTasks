@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, Future, wait, FIRST_COMPLETED
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from .config import _is_file_review
 from .dag import build_scoped_dag, get_execution_order, should_skip
 from .events import EventLogger
 from .notify import notify_task_failed, notify_pipeline_done
@@ -112,16 +113,20 @@ def _execute_task(config: Config, state: RunState, task_id: str,
             event_logger.log("task_running", task_id=task_id, status="running",
                              message=f"Task started (tool={task.tool})")
 
-        # Review baseline
+        # Review baseline / file
         baseline = None
+        review_file = None
         if task.review_of:
-            reviewed_state = state.tasks.get(task.review_of)
-            if reviewed_state:
-                baseline = reviewed_state.git_baseline
-                if reviewed_state.git_dirty:
-                    state.set_review_scope(task_id, "possibly_contaminated")
-                    print(f"  warn  {task_id}: review scope may be contaminated "
-                          f"(reviewed task had {len(reviewed_state.git_dirty)} dirty files)")
+            if _is_file_review(task.review_of):
+                review_file = task.review_of
+            else:
+                reviewed_state = state.tasks.get(task.review_of)
+                if reviewed_state:
+                    baseline = reviewed_state.git_baseline
+                    if reviewed_state.git_dirty:
+                        state.set_review_scope(task_id, "possibly_contaminated")
+                        print(f"  warn  {task_id}: review scope may be contaminated "
+                              f"(reviewed task had {len(reviewed_state.git_dirty)} dirty files)")
 
         # Execute
         print(f"  start {task_id} (tool={task.tool})")
@@ -135,20 +140,21 @@ def _execute_task(config: Config, state: RunState, task_id: str,
             task_id=task_id,
             snapshot=snapshot,
             baseline_commit=baseline,
+            review_file=review_file,
         )
 
         # Classify result
         if result.exit_code == -3:
-            error = result.stderr[:500] or "Review precondition not met (no baseline)"
+            error = result.stderr[:500] or "Review precondition not met"
             state.set_failed(task_id, error, result.log_file)
-            print(f"  FAIL  {task_id} (no baseline for review)")
+            print(f"  FAIL  {task_id} ({error})")
             notify_task_failed(config.settings, task_id, error)
             if event_logger:
                 event_logger.log("task_failed", task_id=task_id, status="failed", message=error)
             return TaskExecutionResult(task_id, project, FAILED, error)
 
         if result.exit_code == -4:
-            reason = result.stderr[:500] or "No changes to review"
+            reason = result.stderr[:500] or "Nothing to review"
             state.set_skipped(task_id, reason)
             print(f"  skip  {task_id} ({reason})")
             if event_logger:

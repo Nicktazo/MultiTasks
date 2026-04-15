@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from graphlib import TopologicalSorter, CycleError
 
@@ -55,6 +56,19 @@ class Config:
 VALID_TOOLS = ("claude", "codex", "codex-review")
 VALID_NOTIFY = ("whatsapp", "telegram", "none")
 VALID_DIRTY = ("warn", "block", "ignore")
+
+_TASK_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,49}$")
+
+
+def _is_file_review(review_of: str) -> bool:
+    """True if review_of is a file path rather than a task ID reference."""
+    if _TASK_ID_RE.match(review_of):
+        return False
+    if ":" in review_of:
+        proj, _, tid = review_of.partition(":")
+        if _TASK_ID_RE.match(proj) and _TASK_ID_RE.match(tid):
+            return False
+    return True
 
 
 def load_config(path: str = "projects.yaml") -> Config:
@@ -192,7 +206,9 @@ def load_config(path: str = "projects.yaml") -> Config:
             review_of_raw = rt.get("review_of")
             review_of = None
             if review_of_raw:
-                if ":" in review_of_raw:
+                if _is_file_review(review_of_raw):
+                    review_of = review_of_raw
+                elif ":" in review_of_raw:
                     review_of = review_of_raw
                 else:
                     review_of = f"{proj_name}:{review_of_raw}"
@@ -225,15 +241,18 @@ def load_config(path: str = "projects.yaml") -> Config:
                 errors.append(f"Task '{task.id}': depends_on '{dep}' does not exist")
 
         if task.review_of:
-            if task.review_of not in global_ids:
-                errors.append(f"Task '{task.id}': review_of '{task.review_of}' does not exist")
+            if _is_file_review(task.review_of):
+                pass  # File path: no existence/same-project/depends_on checks
             else:
-                if task.review_of in config.tasks:
-                    reviewed = config.tasks[task.review_of]
-                    if reviewed.project != task.project:
-                        errors.append(f"Task '{task.id}': review_of '{task.review_of}' must be in the same project")
-                if task.review_of not in task.depends_on:
-                    errors.append(f"Task '{task.id}': review_of '{task.review_of}' must also appear in depends_on")
+                if task.review_of not in global_ids:
+                    errors.append(f"Task '{task.id}': review_of '{task.review_of}' does not exist")
+                else:
+                    if task.review_of in config.tasks:
+                        reviewed = config.tasks[task.review_of]
+                        if reviewed.project != task.project:
+                            errors.append(f"Task '{task.id}': review_of '{task.review_of}' must be in the same project")
+                    if task.review_of not in task.depends_on:
+                        errors.append(f"Task '{task.id}': review_of '{task.review_of}' must also appear in depends_on")
 
     # --- DAG cycle check ---
     try:

@@ -9,7 +9,7 @@ from typing import Any, Callable
 
 import yaml
 
-from .config import load_config, ConfigError, Settings
+from .config import load_config, ConfigError, Settings, _is_file_review
 
 _config_lock = threading.Lock()
 
@@ -46,7 +46,9 @@ def config_to_dict(config) -> dict:
                         deps.append(dep)
                 t["depends_on"] = deps
             if task.review_of:
-                if ":" in task.review_of:
+                if _is_file_review(task.review_of):
+                    t["review_of"] = task.review_of
+                elif ":" in task.review_of:
                     ro_proj, ro_id = task.review_of.split(":", 1)
                     t["review_of"] = ro_id if ro_proj == proj_name else task.review_of
                 else:
