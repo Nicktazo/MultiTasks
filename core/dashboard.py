@@ -42,6 +42,14 @@ class _DashboardHandler(BaseHTTPRequestHandler):
     workspace_store: WorkspaceStore = None  # type: ignore
 
     def do_GET(self) -> None:
+        try:
+            self._route_get()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self._send_json(500, {"error": f"Internal error: {type(e).__name__}: {str(e)[:200]}"})
+
+    def _route_get(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
         params = parse_qs(parsed.query)
@@ -76,6 +84,14 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": f"Not found: {self.path}"})
 
     def do_POST(self) -> None:
+        try:
+            self._route_post()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self._send_json(500, {"ok": False, "error": f"Internal error: {type(e).__name__}: {str(e)[:200]}"})
+
+    def _route_post(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
 
