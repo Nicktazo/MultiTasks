@@ -292,7 +292,7 @@
     en: {
       title: 'MultiTasks Dashboard',
       tab_runs: 'Runs', tab_config: 'Config',
-      btn_run_all: 'Run All', btn_retry_latest: 'Retry Latest',
+      btn_run_all: 'Run All', btn_retry_latest: 'Retry Latest', btn_retry_failed: 'Retry Failed',
       btn_save_settings: 'Save Settings', btn_save: 'Save', btn_cancel: 'Cancel',
       btn_add_project: '+ Add Project', btn_add_task: '+ Add Task',
       btn_edit: 'Edit', btn_validate: 'Validate Config',
@@ -371,7 +371,7 @@
     zh: {
       title: 'MultiTasks \u63a7\u5236\u53f0',
       tab_runs: '\u8fd0\u884c', tab_config: '\u914d\u7f6e',
-      btn_run_all: '\u5168\u90e8\u8fd0\u884c', btn_retry_latest: '\u91cd\u8bd5\u6700\u8fd1',
+      btn_run_all: '\u5168\u90e8\u8fd0\u884c', btn_retry_latest: '\u91cd\u8bd5\u6700\u8fd1', btn_retry_failed: '\u91cd\u8bd5\u5931\u8d25',
       btn_save_settings: '\u4fdd\u5b58\u8bbe\u7f6e', btn_save: '\u4fdd\u5b58', btn_cancel: '\u53d6\u6d88',
       btn_add_project: '+ \u6dfb\u52a0\u9879\u76ee', btn_add_task: '+ \u6dfb\u52a0\u4efb\u52a1',
       btn_edit: '\u7f16\u8f91', btn_validate: '\u9a8c\u8bc1\u914d\u7f6e',
@@ -778,7 +778,7 @@
   }
 
   function buildLogPanel(res) {
-    if (res.format === 'claude') {
+    if (res.format === 'claude' || res.format === 'codex') {
       var container = el('div', {className: 'log-panel log-formatted'});
       var m = res.meta || {};
       // Metadata bar
@@ -788,6 +788,8 @@
       if (m.duration_s != null) metaParts.push(m.duration_s + 's');
       if (m.num_turns != null) metaParts.push(m.num_turns + ' ' + t('log_turns'));
       if (m.cost_usd != null) metaParts.push('$' + m.cost_usd.toFixed(4));
+      if (m.input_tokens != null) metaParts.push(m.input_tokens.toLocaleString() + ' in');
+      if (m.output_tokens != null) metaParts.push(m.output_tokens.toLocaleString() + ' out');
       if (m.models) {
         metaParts.push(m.models.map(function(n) {
           return n.replace('claude-', '').replace(/-\d{8}$/, '');
@@ -862,6 +864,22 @@
       })
     );
     container.appendChild(statsRow);
+
+    /* Retry Failed button — global scope, shown only on latest run */
+    if (!selectedRunId) {
+      var anyFailed = tasks.some(function(tk) {
+        var s = tk.status || 'pending';
+        return s === 'failed' || s === 'skipped';
+      });
+      if (anyFailed) {
+        container.appendChild(el('button', {
+          className: 'btn btn-secondary btn-sm',
+          textContent: t('btn_retry_failed'),
+          style: 'margin-bottom: 12px;',
+          onclick: function() { triggerRun('retry', container); }
+        }));
+      }
+    }
 
     /* Projects */
     var projectsDiv = el('div', {className: 'projects'});
