@@ -44,6 +44,7 @@ class Settings:
     dirty_workspace: str = "warn"    # warn | block | ignore
     public_base_url: str = ""        # e.g. "https://mt.imagecolor.cn"
     listen_address: str = "127.0.0.1"  # "0.0.0.0" to accept external traffic
+    mobile_mode: bool = False        # push WhatsApp reply links on chat
 
 
 @dataclass
@@ -60,15 +61,41 @@ VALID_DIRTY = ("warn", "block", "ignore")
 _TASK_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,49}$")
 
 
-def _is_file_review(review_of: str) -> bool:
-    """True if review_of is a file path rather than a task ID reference."""
-    if _TASK_ID_RE.match(review_of):
-        return False
-    if ":" in review_of:
-        proj, _, tid = review_of.partition(":")
+def _is_task_id(s: str) -> bool:
+    """True if s looks like a single task ID (local or global)."""
+    if _TASK_ID_RE.match(s):
+        return True
+    if ":" in s:
+        proj, _, tid = s.partition(":")
         if _TASK_ID_RE.match(proj) and _TASK_ID_RE.match(tid):
-            return False
-    return True
+            return True
+    return False
+
+
+def _is_file_review(review_of: str) -> bool:
+    """True if review_of is a file path rather than a task ID reference.
+
+    Supports comma-separated task IDs (e.g. 'task-a,task-b,task-c').
+    Returns False for comma-separated values (even malformed ones like
+    'a,,b') so they go through task-ID validation and get proper errors.
+    """
+    if "," in review_of:
+        return False  # comma-separated → always task-ID path
+    return not _is_task_id(review_of)
+
+
+def _transitive_deps(task_id: str, tasks: dict[str, Task]) -> set[str]:
+    """Return the transitive closure of depends_on for a task."""
+    visited: set[str] = set()
+    stack = list(tasks[task_id].depends_on) if task_id in tasks else []
+    while stack:
+        dep = stack.pop()
+        if dep in visited:
+            continue
+        visited.add(dep)
+        if dep in tasks:
+            stack.extend(tasks[dep].depends_on)
+    return visited
 
 
 def load_config(path: str = "projects.yaml") -> Config:
@@ -144,6 +171,12 @@ def load_config(path: str = "projects.yaml") -> Config:
     else:
         settings.listen_address = la
 
+    mm = raw_settings.get("mobile_mode", settings.mobile_mode)
+    if not isinstance(mm, bool):
+        errors.append(f"settings.mobile_mode must be a boolean, got {mm!r}")
+    else:
+        settings.mobile_mode = mm
+
     # --- Build projects and tasks ---
     config = Config(settings=settings)
     global_ids: set[str] = set()
@@ -202,16 +235,24 @@ def load_config(path: str = "projects.yaml") -> Config:
                 else:
                     deps.append(f"{proj_name}:{dep}")
 
-            # review_of
+            # review_of — single task ID, comma-separated IDs, or file path
             review_of_raw = rt.get("review_of")
             review_of = None
             if review_of_raw:
                 if _is_file_review(review_of_raw):
                     review_of = review_of_raw
-                elif ":" in review_of_raw:
-                    review_of = review_of_raw
                 else:
-                    review_of = f"{proj_name}:{review_of_raw}"
+                    # Qualify each task ID with project prefix
+                    parts = [p.strip() for p in review_of_raw.split(",")]
+                    qualified = []
+                    for p in parts:
+                        if not p:
+                            errors.append(f"Task '{global_id}': review_of contains empty entry")
+                        elif ":" in p:
+                            qualified.append(p)
+                        else:
+                            qualified.append(f"{proj_name}:{p}")
+                    review_of = ",".join(qualified) if qualified else None
 
             if tool == "codex-review" and not review_of:
                 errors.append(f"Task '{global_id}': codex-review tasks must have 'review_of'")
@@ -244,15 +285,20 @@ def load_config(path: str = "projects.yaml") -> Config:
             if _is_file_review(task.review_of):
                 pass  # File path: no existence/same-project/depends_on checks
             else:
-                if task.review_of not in global_ids:
-                    errors.append(f"Task '{task.id}': review_of '{task.review_of}' does not exist")
-                else:
-                    if task.review_of in config.tasks:
-                        reviewed = config.tasks[task.review_of]
-                        if reviewed.project != task.project:
-                            errors.append(f"Task '{task.id}': review_of '{task.review_of}' must be in the same project")
-                    if task.review_of not in task.depends_on:
-                        errors.append(f"Task '{task.id}': review_of '{task.review_of}' must also appear in depends_on")
+                review_ids = [r.strip() for r in task.review_of.split(",")]
+                for rid in review_ids:
+                    if rid not in global_ids:
+                        errors.append(f"Task '{task.id}': review_of '{rid}' does not exist")
+                    else:
+                        if rid in config.tasks:
+                            reviewed = config.tasks[rid]
+                            if reviewed.project != task.project:
+                                errors.append(f"Task '{task.id}': review_of '{rid}' must be in the same project")
+                # All review_of targets must be upstream (transitively reachable via depends_on)
+                upstream = _transitive_deps(task.id, config.tasks)
+                for rid in review_ids:
+                    if rid in global_ids and rid not in upstream:
+                        errors.append(f"Task '{task.id}': review_of '{rid}' is not an upstream dependency")
 
     # --- DAG cycle check ---
     try:

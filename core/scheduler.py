@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, Future, wait, FIRST_COMPLETED
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from .config import _is_file_review
+from .config import _is_file_review, _transitive_deps
 from .dag import build_scoped_dag, get_execution_order, should_skip
 from .events import EventLogger
 from .notify import notify_task_failed, notify_pipeline_done
@@ -33,7 +33,13 @@ class TaskExecutionResult:
 
 def _is_review_target(config: Config, task: Task) -> bool:
     """True if this task is referenced by a codex-review task's review_of."""
-    return any(t.review_of == task.id for t in config.tasks.values())
+    for t in config.tasks.values():
+        if not t.review_of or _is_file_review(t.review_of):
+            continue
+        review_ids = [r.strip() for r in t.review_of.split(",")]
+        if task.id in review_ids:
+            return True
+    return False
 
 
 def resolve_project_scope(config: Config, project: str) -> set[str]:
@@ -120,13 +126,32 @@ def _execute_task(config: Config, state: RunState, task_id: str,
             if _is_file_review(task.review_of):
                 review_file = task.review_of
             else:
-                reviewed_state = state.tasks.get(task.review_of)
-                if reviewed_state:
-                    baseline = reviewed_state.git_baseline
+                # Find the root of the reviewed set (task with no other
+                # reviewed task in its upstream) for the broadest diff.
+                review_ids = [r.strip() for r in task.review_of.split(",")]
+                review_set = set(review_ids)
+                root_id = None
+                for rid in review_ids:
+                    upstream = _transitive_deps(rid, config.tasks)
+                    if not (upstream & review_set):
+                        root_id = rid
+                        break
+                # Fallback: first in list
+                if root_id is None:
+                    root_id = review_ids[0]
+                contaminated = False
+                for rid in review_ids:
+                    reviewed_state = state.tasks.get(rid)
+                    if not reviewed_state:
+                        continue
+                    if rid == root_id and reviewed_state.git_baseline:
+                        baseline = reviewed_state.git_baseline
                     if reviewed_state.git_dirty:
-                        state.set_review_scope(task_id, "possibly_contaminated")
-                        print(f"  warn  {task_id}: review scope may be contaminated "
-                              f"(reviewed task had {len(reviewed_state.git_dirty)} dirty files)")
+                        contaminated = True
+                if contaminated:
+                    state.set_review_scope(task_id, "possibly_contaminated")
+                    print(f"  warn  {task_id}: review scope may be contaminated "
+                          f"(reviewed task(s) had dirty files)")
 
         # Execute
         print(f"  start {task_id} (tool={task.tool})")

@@ -226,6 +226,7 @@ def run_task(tool: str, prompt: str, cwd: str, timeout: int,
     Does NOT perform git operations — snapshot is for log header only.
     """
     env = {**os.environ, "NO_COLOR": "1"}
+    env.pop("CLAUDECODE", None)
     start = datetime.now()
 
     if tool == "claude":

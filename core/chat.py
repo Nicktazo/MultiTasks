@@ -266,19 +266,36 @@ def _extract_log_result(project_root: str, log_path: str) -> str:
     except OSError:
         return ""
 
-    # Parse Claude CLI output format
+    # Parse CLI output format
     m = re.search(r"=== STDOUT ===\s*\n(.*?)(?:\n\s*=== STDERR ===|$)",
                   raw, re.DOTALL)
     if not m:
         return ""
     json_str = m.group(1).strip()
+
+    # Try Claude single-JSON format
     try:
         data = json.loads(json_str)
     except (json.JSONDecodeError, ValueError):
-        return ""
-    if not isinstance(data, dict) or data.get("type") != "result":
-        return ""
-    return data.get("result", "")
+        data = None
+    if isinstance(data, dict) and data.get("type") == "result":
+        return data.get("result", "")
+
+    # Try codex streaming format (one JSON per line)
+    last_msg = ""
+    for line in json_str.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if (obj.get("type") == "item.completed"
+                and obj.get("item", {}).get("type") == "agent_message"
+                and obj.get("item", {}).get("text")):
+            last_msg = obj["item"]["text"]
+    return last_msg
 
 
 def build_task_list(config_path: str, project_name: str) -> str:

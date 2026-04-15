@@ -302,6 +302,7 @@
       setting_dirty_workspace: 'Dirty Workspace',
       setting_public_base_url: 'Public Base URL',
       setting_listen_address: 'Listen Address',
+      setting_mobile_mode: 'Mobile Mode',
       label_id: 'ID', label_prompt: 'Prompt', label_tool: 'Tool',
       label_depends_on: 'Depends on', label_review_of: 'Review of',
       label_project: 'Project', label_path: 'Path', label_task_id: 'Task ID',
@@ -341,6 +342,7 @@
       help_dirty_workspace: 'warn/block/ignore uncommitted changes',
       help_public_base_url: 'WhatsApp reply link base. Leave empty to disable.',
       help_listen_address: '127.0.0.1 = local only, 0.0.0.0 = accept external. Restart required.',
+      help_mobile_mode: 'Push chat replies to WhatsApp with reply links.',
       help_project_name: 'Unique project identifier, used as task ID prefix',
       help_project_path: 'Absolute path to project, must be a git repo',
       help_task_id: 'Unique ID within project, referenced by other tasks',
@@ -381,6 +383,7 @@
       setting_dirty_workspace: '\u810f\u5de5\u4f5c\u533a',
       setting_public_base_url: '\u516c\u5f00\u57fa\u5740',
       setting_listen_address: '\u76d1\u542c\u5730\u5740',
+      setting_mobile_mode: '\u624b\u673a\u6a21\u5f0f',
       label_id: 'ID', label_prompt: '\u6307\u4ee4', label_tool: '\u5de5\u5177',
       label_depends_on: '\u4f9d\u8d56', label_review_of: 'Review \u5bf9\u8c61',
       label_project: '\u9879\u76ee', label_path: '\u8def\u5f84', label_task_id: '\u4efb\u52a1 ID',
@@ -420,6 +423,7 @@
       help_dirty_workspace: 'warn=\u8b66\u544a, block=\u4e2d\u6b62, ignore=\u5ffd\u7565',
       help_public_base_url: 'WhatsApp\u56de\u590d\u94fe\u63a5\u57fa\u5740\uff0c\u7559\u7a7a\u7981\u7528',
       help_listen_address: '127.0.0.1=\u4ec5\u672c\u5730, 0.0.0.0=\u63a5\u53d7\u5916\u90e8\u8bbf\u95ee\u3002\u91cd\u542f\u751f\u6548',
+      help_mobile_mode: '\u5f00\u542f\u540e Chat \u56de\u590d\u81ea\u52a8\u63a8\u9001 WhatsApp \u56de\u590d\u94fe\u63a5',
       help_project_name: '\u9879\u76ee\u552f\u4e00\u6807\u8bc6\uff0c\u7528\u4f5c\u4efb\u52a1ID\u524d\u7f00',
       help_project_path: '\u9879\u76ee\u7edd\u5bf9\u8def\u5f84\uff0c\u5fc5\u987b\u662fgit\u4ed3\u5e93',
       help_task_id: '\u9879\u76ee\u5185\u552f\u4e00ID\uff0c\u88ab\u5176\u4ed6\u4efb\u52a1\u4f9d\u8d56\u5f15\u7528',
@@ -867,7 +871,7 @@
 
     /* Retry Failed button — global scope, shown only on latest run */
     if (!selectedRunId) {
-      var anyFailed = tasks.some(function(tk) {
+      var anyFailed = Object.values(tasks).some(function(tk) {
         var s = tk.status || 'pending';
         return s === 'failed' || s === 'skipped';
       });
@@ -1025,6 +1029,7 @@
       {key: 'dirty_workspace', labelKey: 'setting_dirty_workspace', helpKey: 'help_dirty_workspace', type: 'select', options: ['warn', 'block', 'ignore']},
       {key: 'public_base_url', labelKey: 'setting_public_base_url', helpKey: 'help_public_base_url', type: 'text'},
       {key: 'listen_address', labelKey: 'setting_listen_address', helpKey: 'help_listen_address', type: 'select', options: ['127.0.0.1', '0.0.0.0']},
+      {key: 'mobile_mode', labelKey: 'setting_mobile_mode', helpKey: 'help_mobile_mode', type: 'checkbox'},
     ];
 
     var settingsInputs = {};
@@ -1040,6 +1045,11 @@
         });
         settingsInputs[f.key] = sel;
         group.appendChild(sel);
+      } else if (f.type === 'checkbox') {
+        var cb = el('input', {type: 'checkbox', id: 'setting-' + f.key});
+        cb.checked = !!settings[f.key];
+        settingsInputs[f.key] = cb;
+        group.appendChild(cb);
       } else {
         var inp = el('input', {type: f.type, value: String(settings[f.key] || ''), id: 'setting-' + f.key});
         settingsInputs[f.key] = inp;
@@ -1053,8 +1063,13 @@
       onclick: function() {
         var payload = {};
         settingsFields.forEach(function(f) {
-          var val = settingsInputs[f.key].value;
-          if (f.type === 'number') val = parseInt(val, 10);
+          var val;
+          if (f.type === 'checkbox') {
+            val = settingsInputs[f.key].checked;
+          } else {
+            val = settingsInputs[f.key].value;
+            if (f.type === 'number') val = parseInt(val, 10);
+          }
           payload[f.key] = val;
         });
         postConfig('/api/config/settings', payload, container);

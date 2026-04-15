@@ -34,7 +34,8 @@ def send_notification(settings: Settings, message: str) -> None:
 
     # Build the inner command that su -c will execute.
     # shlex.quote wraps msg in single quotes with proper escaping.
-    inner_cmd = f"openclaw message send --channel {channel} {shlex.quote(msg)}"
+    target = "+8618918668262"
+    inner_cmd = f"openclaw message send --channel {channel} -t {target} -m {shlex.quote(msg)}"
     remote_cmd = f"su - Nick -c {shlex.quote(inner_cmd)}"
 
     cmd = [

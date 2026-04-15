@@ -1,58 +1,4 @@
-projects:
-  T1-lingyan-print-service:
-    path: /mnt/c/Python Code/lingyan-print-service
-    tasks:
-    - id: add-t1-proxy-endpoints
-      prompt: Add T1 proxy endpoints for the new T0 API updates. Review existing T0
-        API changes, implement corresponding T1 proxy endpoints following the project's
-        patterns and architecture.
-      tool: claude
-    - id: review-t1-proxy-endpoints
-      prompt: Review the T1 proxy endpoint implementation for code quality, security,
-        error handling, and adherence to project standards.
-      tool: codex-review
-      depends_on:
-      - add-t1-proxy-endpoints
-      review_of: add-t1-proxy-endpoints
-    - id: add-weight-volume-to-quote-response
-      prompt: 'Add weight and volume calculations to quote response. Include: weight_kg
-        (paper weight + binding hardware + 8% packaging overhead), volume_cm3, volumetric_weight_kg
-        (L×W×H÷6000). Use industry formulas: single sheet weight = L(mm)×W(mm)×GSM÷1,000,000,
-        multi-component products = cover weight + inner pages weight + binding hardware
-        (saddle stitch ~2g, perfect binding ~1.5g/cm spine, thread sewn ~2g/cm, hardcover
-        30-80g, wire-o 10-30g). Return all three metrics in quote response for T2
-        shipping calculation.'
-      tool: claude
-    - id: review-weight-volume-implementation
-      prompt: 'Review weight and volume calculation implementation. Verify: (1) formula
-        accuracy against ISO 536:2019 and DS Smith standards, (2) multi-component
-        handling (cover + inner pages separately calculated), (3) binding hardware
-        weight by type (saddle/perfect/thread/hardcover/wire-o), (4) 8% packaging
-        overhead applied correctly, (5) volumetric weight formula (÷6000), (6) all
-        three metrics returned in response, (7) edge cases (single-sheet vs bound
-        products, missing dimensions)'
-      tool: codex-review
-      depends_on:
-      - add-weight-volume-to-quote-response
-      review_of: add-weight-volume-to-quote-response
-  Linyeah_web2print:
-    path: /mnt/c/Python Code/web2print
-    tasks:
-    - id: extend-express-fee-api
-      prompt: Extend T1 express/fee API to accept logistics parameters (LogisticsType,
-        Quantity, Province, City, District) and pass them to T0. Modify app/api/linyeah_express.py
-        to add new Body parameters (logistics_type, quantity, province, city, district)
-        and update app/services/linyeah_express_service.py to pass these parameters
-        to T0 /api/OrderMan/GetExpressFee endpoint. Remove old order_code parameter
-        as it has no callers.
-      tool: claude
-    - id: review-express-fee-changes
-      prompt: Review the express fee API extension changes for correctness, parameter
-        validation, and proper T0 integration
-      tool: codex-review
-      depends_on:
-      - extend-express-fee-api
-      review_of: extend-express-fee-api
+projects: {}
 settings:
   max_parallel: 2
   notify: whatsapp
@@ -61,3 +7,5 @@ settings:
   state_dir: state
   log_dir: logs
   dirty_workspace: warn
+  listen_address: 0.0.0.0
+  public_base_url: https://mt.imagecolor.cn

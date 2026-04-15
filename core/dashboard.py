@@ -284,9 +284,10 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             turn = self.workspace_store.save_turn(
                 name, message, result["reply"], result["tasks"]
             )
-            # WhatsApp push (only if public_base_url configured)
+            # WhatsApp push (only if mobile_mode + public_base_url configured)
             base_url = self._get_setting("public_base_url", "")
-            if base_url and turn:
+            mobile = self._get_setting("mobile_mode", "") == "True"
+            if mobile and base_url and turn:
                 token = self.reply_token_store.create(
                     workspace=name,
                     assistant_msg_id=turn["assistant_id"],
@@ -418,7 +419,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
 
         # Chain: generate new token + push WhatsApp
         base_url = self._get_setting("public_base_url", "")
-        if base_url and turn:
+        mobile = self._get_setting("mobile_mode", "") == "True"
+        if mobile and base_url and turn:
             new_token = store.create(
                 workspace=workspace_name,
                 assistant_msg_id=turn["assistant_id"],
@@ -599,7 +601,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             return
 
         # Try to parse Claude CLI output format and return structured data
-        parsed = self._parse_claude_log(raw, _MAX_RESULT)
+        parsed = self._parse_ai_log(raw, _MAX_RESULT)
         if parsed:
             self._send_json(200, parsed)
         else:
@@ -611,46 +613,97 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                                   "content": raw, "truncated": truncated})
 
     @staticmethod
-    def _parse_claude_log(raw: str, max_result: int) -> dict | None:
-        """Parse Claude CLI log format into structured response."""
+    def _parse_ai_log(raw: str, max_result: int) -> dict | None:
+        """Parse Claude or Codex CLI log format into structured response."""
         import re
         m = re.search(r"=== STDOUT ===\s*\n(.*?)(?:\n\s*=== STDERR ===|$)",
                       raw, re.DOTALL)
         if not m:
             return None
         json_str = m.group(1).strip()
+
+        # 1) Try Claude single-JSON format
         try:
             data = json.loads(json_str)
         except (json.JSONDecodeError, ValueError):
-            return None
-        if not isinstance(data, dict) or data.get("type") != "result":
+            data = None
+
+        if isinstance(data, dict) and data.get("type") == "result":
+            result_text = data.get("result", "")
+            truncated = len(result_text) > max_result
+            if truncated:
+                result_text = result_text[:max_result]
+
+            # Extract stderr
+            sm = re.search(r"=== STDERR ===\s*\n(.*)", raw, re.DOTALL)
+            stderr = sm.group(1).strip() if sm else ""
+            if stderr == "(empty)":
+                stderr = ""
+
+            meta: dict = {
+                "is_ok": data.get("subtype") == "success" and not data.get("is_error"),
+            }
+            if data.get("duration_ms") is not None:
+                meta["duration_s"] = round(data["duration_ms"] / 1000)
+            if data.get("num_turns") is not None:
+                meta["num_turns"] = data["num_turns"]
+            if data.get("total_cost_usd") is not None:
+                meta["cost_usd"] = round(data["total_cost_usd"], 4)
+            if data.get("modelUsage"):
+                meta["models"] = list(data["modelUsage"].keys())
+
+            return {"ok": True, "format": "claude", "meta": meta,
+                    "result": result_text, "stderr": stderr,
+                    "truncated": truncated}
+
+        # 2) Try codex streaming format (one JSON per line)
+        agent_messages = []
+        usage = {}
+        for line in json_str.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if obj.get("type") == "item.completed":
+                item = obj.get("item", {})
+                if item.get("type") == "agent_message" and item.get("text"):
+                    agent_messages.append(item["text"])
+            elif obj.get("type") == "turn.completed":
+                usage = obj.get("usage", {})
+
+        if not agent_messages:
             return None
 
-        result_text = data.get("result", "")
+        result_text = agent_messages[-1]
         truncated = len(result_text) > max_result
         if truncated:
             result_text = result_text[:max_result]
 
         # Extract stderr
-        sm = re.search(r"=== STDERR ===\s*\n(.*)", raw, re.DOTALL)
+        sm = re.search(r"=== STDERR ===\s*\n(.*?)(?:\n\s*=== RESULT ===|$)",
+                       raw, re.DOTALL)
         stderr = sm.group(1).strip() if sm else ""
         if stderr == "(empty)":
             stderr = ""
 
-        # Build structured response
-        meta: dict = {
-            "is_ok": data.get("subtype") == "success" and not data.get("is_error"),
-        }
-        if data.get("duration_ms") is not None:
-            meta["duration_s"] = round(data["duration_ms"] / 1000)
-        if data.get("num_turns") is not None:
-            meta["num_turns"] = data["num_turns"]
-        if data.get("total_cost_usd") is not None:
-            meta["cost_usd"] = round(data["total_cost_usd"], 4)
-        if data.get("modelUsage"):
-            meta["models"] = list(data["modelUsage"].keys())
+        # is_ok: derive from exit code in === RESULT === section only
+        result_section = re.search(r"=== RESULT ===\s*\n(.*)",
+                                   raw, re.DOTALL)
+        result_block = result_section.group(1) if result_section else ""
+        exit_m = re.search(r"^Exit code:\s*(\S+)", result_block,
+                           re.MULTILINE)
+        is_ok = exit_m.group(1) == "0" if exit_m else True
 
-        return {"ok": True, "format": "claude", "meta": meta,
+        meta = {"is_ok": is_ok}
+        if usage.get("input_tokens"):
+            meta["input_tokens"] = usage["input_tokens"]
+        if usage.get("output_tokens"):
+            meta["output_tokens"] = usage["output_tokens"]
+
+        return {"ok": True, "format": "codex", "meta": meta,
                 "result": result_text, "stderr": stderr,
                 "truncated": truncated}
 
