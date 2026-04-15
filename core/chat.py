@@ -520,7 +520,7 @@ def _looks_like_task_request(message: str) -> bool:
 # ---- Isolated task generator ----
 
 def generate_tasks(project_name: str, user_message: str,
-                   config_path: str, timeout: int = 120) -> dict:
+                   config_path: str, timeout: int = 300) -> dict:
     """Generate tasks in an isolated Claude CLI invocation.
 
     Unlike chat_reply, this runs without session state, workspace tools,
@@ -532,21 +532,29 @@ def generate_tasks(project_name: str, user_message: str,
 
     system_prompt = (
         f"## Task Generator (project: {project_name})\n"
-        "You are a task planning assistant. Generate [TASK]...[/TASK] blocks.\n\n"
-        "Format (one block per task):\n"
+        "You are a task planning assistant. You MUST output [TASK]...[/TASK] blocks.\n"
+        "Do NOT output anything else — no prose, no markdown, no explanation.\n\n"
+        "## Format\n"
+        "Each task must be wrapped in [TASK] and [/TASK] tags exactly like this:\n\n"
         "[TASK]\n"
-        "id: my-task-id\n"
+        "id: implement-feature\n"
         "tool: claude\n"
-        "prompt: Detailed instruction for the task...\n"
-        "depends_on: other-task-id\n"
+        "prompt: Implement the login form with email and password fields\n"
         "[/TASK]\n\n"
-        "Fields:\n"
-        "- id: unique identifier (required)\n"
+        "[TASK]\n"
+        "id: review-feature\n"
+        "tool: codex-review\n"
+        "prompt: Review the login form implementation\n"
+        "depends_on: implement-feature\n"
+        "review_of: implement-feature\n"
+        "[/TASK]\n\n"
+        "## Fields\n"
+        "- id: kebab-case identifier (required)\n"
         "- tool: claude | codex | codex-review (required)\n"
-        "- prompt: full instruction text (required)\n"
+        "- prompt: detailed instruction (required)\n"
         "- depends_on: comma-separated prerequisite task IDs (optional)\n"
-        "- review_of: task ID to review (optional, only with codex-review)\n\n"
-        "IMPORTANT: Output ONLY [TASK] blocks. No prose."
+        "- review_of: task ID to review (required for codex-review)\n\n"
+        "CRITICAL: Your entire response must consist of [TASK]...[/TASK] blocks only."
     )
     if task_list:
         system_prompt += (
@@ -557,8 +565,9 @@ def generate_tasks(project_name: str, user_message: str,
     cmd = [
         "claude", "-p", user_message,
         "--output-format", "json",
+        "--model", "sonnet",
         "--no-session-persistence",
-        "--system-prompt", system_prompt,
+        "--append-system-prompt", system_prompt,
     ]
 
     env = os.environ.copy()
