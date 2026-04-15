@@ -112,7 +112,7 @@ def config_dashboard_server():
         },
         "settings": {
             "max_parallel": 2, "timeout": 600, "notify": "none",
-            "dashboard_port": 18300, "state_dir": state_dir, "log_dir": log_dir,
+            "dashboard_port": 8704, "state_dir": state_dir, "log_dir": log_dir,
             "dirty_workspace": "warn",
         },
     }
@@ -293,7 +293,8 @@ def test_port_binding_error(monkeypatch, capsys):
     assert result is False
 
     captured = capsys.readouterr()
-    assert "cannot start dashboard on port 9999" in captured.err
+    assert "cannot start dashboard on" in captured.err
+    assert "9999" in captured.err
     assert "Address already in use" in captured.err
 
 

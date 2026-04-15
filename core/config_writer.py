@@ -16,7 +16,8 @@ _config_lock = threading.Lock()
 # Fixed key order for settings serialization
 _SETTINGS_KEYS = [
     "max_parallel", "timeout", "notify", "dashboard_port",
-    "state_dir", "log_dir", "dirty_workspace",
+    "state_dir", "log_dir", "dirty_workspace", "public_base_url",
+    "listen_address",
 ]
 
 

@@ -36,11 +36,13 @@ class Project:
 class Settings:
     max_parallel: int = 2
     notify: str = "none"
-    dashboard_port: int = 18300
+    dashboard_port: int = 8704
     timeout: int = 600
     state_dir: str = "state"
     log_dir: str = "logs"
     dirty_workspace: str = "warn"    # warn | block | ignore
+    public_base_url: str = ""        # e.g. "https://mt.imagecolor.cn"
+    listen_address: str = "127.0.0.1"  # "0.0.0.0" to accept external traffic
 
 
 @dataclass
@@ -114,6 +116,19 @@ def load_config(path: str = "projects.yaml") -> Config:
 
     settings.state_dir = raw_settings.get("state_dir", settings.state_dir)
     settings.log_dir = raw_settings.get("log_dir", settings.log_dir)
+
+    pbu = raw_settings.get("public_base_url", settings.public_base_url)
+    if not isinstance(pbu, str):
+        errors.append(f"settings.public_base_url must be a string, got {pbu!r}")
+    else:
+        settings.public_base_url = pbu
+
+    la = raw_settings.get("listen_address", settings.listen_address)
+    valid_addresses = ("127.0.0.1", "0.0.0.0")
+    if la not in valid_addresses:
+        errors.append(f"settings.listen_address must be one of {valid_addresses}, got {la!r}")
+    else:
+        settings.listen_address = la
 
     # --- Build projects and tasks ---
     config = Config(settings=settings)

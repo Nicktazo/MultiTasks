@@ -132,7 +132,8 @@ class WorkspaceStore:
         if ws is None:
             return
         msgs = ws.setdefault("messages", [])
-        msg: dict = {"role": "system", "content": content, "ts": _now_iso()}
+        msg: dict = {"id": _make_msg_id(), "role": "system",
+                      "content": content, "ts": _now_iso()}
         if data:
             msg["data"] = data
         msgs.append(msg)
@@ -140,20 +141,28 @@ class WorkspaceStore:
         self._write(f"{name}.json", ws)
 
     def save_turn(self, name: str, user_msg: str, reply: str,
-                  tasks: list[dict]) -> None:
-        """Append one turn (user + assistant) to workspace."""
+                  tasks: list[dict]) -> dict | None:
+        """Append one turn (user + assistant) to workspace.
+
+        Returns {"user_id": str, "assistant_id": str} or None on failure.
+        """
         self._validate_name(name)  # raises on bad name
         ws = self.get(name)
         if ws is None:
-            return
+            return None
         msgs = ws.setdefault("messages", [])
-        msgs.append({"role": "user", "content": user_msg, "ts": _now_iso()})
-        assistant_msg: dict = {"role": "assistant", "content": reply, "ts": _now_iso()}
+        user_id = _make_msg_id()
+        msgs.append({"id": user_id, "role": "user",
+                      "content": user_msg, "ts": _now_iso()})
+        assistant_id = _make_msg_id()
+        assistant_msg: dict = {"id": assistant_id, "role": "assistant",
+                                "content": reply, "ts": _now_iso()}
         if tasks:
             assistant_msg["tasks"] = tasks
         msgs.append(assistant_msg)
         ws["last_active"] = _now_iso()
         self._write(f"{name}.json", ws)
+        return {"user_id": user_id, "assistant_id": assistant_id}
 
     def _read(self, fname: str) -> dict | None:
         fpath = os.path.join(self.base_dir, fname)
@@ -608,5 +617,34 @@ def generate_tasks(project_name: str, user_message: str,
 
 # ---- Helpers ----
 
+def _make_msg_id() -> str:
+    """Generate a unique message ID."""
+    return str(uuid.uuid4())
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def send_to_whatsapp(message: str) -> dict:
+    """Push message to WhatsApp via VPS OpenClaw. Best-effort, never raises.
+
+    NOTE: SSH StrictHostKeyChecking=no is a temporary carryover from notify.py.
+    Not a security conclusion — acceptable for PoC against our own VPS.
+    """
+    import shlex
+    safe = re.sub(
+        r"[^\w\s.,:;=\-/()+@#\n\u4e00-\u9fff\u3000-\u303f\uff00-\uffef?!]",
+        "", message,
+    )[:4000]
+    inner = f"openclaw message send --channel whatsapp {shlex.quote(safe)}"
+    remote = f"su - Nick -c {shlex.quote(inner)}"
+    cmd = [
+        "ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10",
+        "root@137.220.43.207", remote,
+    ]
+    try:
+        proc = subprocess.run(cmd, timeout=30, capture_output=True, text=True)
+        return {"ok": proc.returncode == 0}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}

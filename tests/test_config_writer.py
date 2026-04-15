@@ -73,7 +73,7 @@ def _base_config(tmp: str) -> dict:
         },
         "settings": {
             "max_parallel": 2, "timeout": 600, "notify": "none",
-            "dashboard_port": 18300,
+            "dashboard_port": 8704,
             "state_dir": os.path.join(tmp, "state"),
             "log_dir": os.path.join(tmp, "logs"),
             "dirty_workspace": "warn",
@@ -106,7 +106,8 @@ def test_config_to_dict_roundtrip(tmp_workspace):
     # Settings keys in fixed order
     assert list(result["settings"].keys()) == [
         "max_parallel", "timeout", "notify", "dashboard_port",
-        "state_dir", "log_dir", "dirty_workspace",
+        "state_dir", "log_dir", "dirty_workspace", "public_base_url",
+        "listen_address",
     ]
 
 
@@ -252,7 +253,7 @@ def test_can_delete_last_project(tmp_workspace):
         },
         "settings": {
             "max_parallel": 1, "timeout": 600, "notify": "none",
-            "dashboard_port": 18300,
+            "dashboard_port": 8704,
             "state_dir": os.path.join(tmp_workspace, "state"),
             "log_dir": os.path.join(tmp_workspace, "logs"),
             "dirty_workspace": "warn",

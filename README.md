@@ -63,7 +63,7 @@ settings:
   max_parallel: 2                # int >= 1, concurrent worker threads
   timeout: 600                   # seconds per task
   notify: none                   # none | whatsapp | telegram
-  dashboard_port: 18300          # int 1024-65535
+  dashboard_port: 8704           # int 1024-65535
   state_dir: state               # run state JSON files
   log_dir: logs                  # per-task log files
   dirty_workspace: warn          # warn | block | ignore
@@ -149,7 +149,7 @@ python multitasks.py dashboard --port 9000  # custom port
 python multitasks.py dashboard --run-id 20260412-100000  # specific run
 ```
 
-The dashboard is served at `http://127.0.0.1:<port>` (default port: 18300).
+The dashboard is served at `http://127.0.0.1:<port>` (default port: 8704).
 
 Two tabs:
 

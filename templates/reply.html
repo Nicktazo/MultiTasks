@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reply — {{WORKSPACE}}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,system-ui,sans-serif;background:#f5f5f5;color:#333;padding:16px}
+.container{max-width:600px;margin:0 auto}
+.header{font-size:14px;color:#666;margin-bottom:12px;font-weight:600}
+.reply-box{background:#fff;border-radius:12px;padding:16px;margin-bottom:16px;
+  white-space:pre-wrap;word-break:break-word;line-height:1.6;font-size:15px;
+  box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.input-area{margin-bottom:12px}
+textarea{width:100%;min-height:120px;border:1px solid #ddd;border-radius:10px;
+  padding:12px;font-size:16px;font-family:inherit;resize:vertical;
+  outline:none;transition:border-color .2s}
+textarea:focus{border-color:#4a90d9}
+.btn{display:block;width:100%;padding:14px;border:none;border-radius:10px;
+  font-size:16px;font-weight:600;cursor:pointer;transition:opacity .2s}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn-primary{background:#4a90d9;color:#fff}
+.btn-primary:hover:not(:disabled){opacity:.85}
+.btn-retry{background:#e67e22;color:#fff;margin-top:8px}
+.error-msg{color:#c0392b;font-size:14px;margin-top:8px}
+.success-msg{color:#27ae60;font-size:14px;margin-top:8px}
+.new-reply{background:#fff;border-radius:12px;padding:16px;margin-top:16px;
+  white-space:pre-wrap;word-break:break-word;line-height:1.6;font-size:15px;
+  box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.chain-link{display:block;text-align:center;margin-top:16px;
+  color:#4a90d9;font-size:15px;font-weight:600;text-decoration:none}
+.status-page{text-align:center;padding:40px 16px}
+.status-page h2{font-size:20px;margin-bottom:12px}
+.status-page p{color:#666;font-size:15px}
+</style>
+</head>
+<body>
+<div class="container" id="app">
+{{CONTENT}}
+</div>
+<script>
+(function(){
+  var form = document.getElementById('reply-form');
+  if (!form) return;
+
+  var textarea = document.getElementById('reply-input');
+  var btn = document.getElementById('send-btn');
+  var errorEl = document.getElementById('error-area');
+  var resultEl = document.getElementById('result-area');
+  var token = form.dataset.token;
+
+  var reasonMap = {
+    already_used: 'This reply link has already been used.',
+    expired: 'This reply link has expired.',
+    conversation_moved: 'The conversation has moved on. Use the latest link.',
+    processing: 'A reply is being processed. Please wait.',
+    not_found: 'Invalid reply link.'
+  };
+
+  form.addEventListener('submit', function(e) {
+    e.preventDefault();
+    var msg = textarea.value.trim();
+    if (!msg) return;
+
+    btn.disabled = true;
+    btn.textContent = 'Sending...';
+    errorEl.textContent = '';
+
+    fetch('/api/reply/' + token, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({message: msg})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.ok) {
+        form.style.display = 'none';
+        // Build result with safe DOM methods
+        var successP = document.createElement('p');
+        successP.className = 'success-msg';
+        successP.textContent = 'Sent!';
+        resultEl.appendChild(successP);
+
+        var replyDiv = document.createElement('div');
+        replyDiv.className = 'new-reply';
+        replyDiv.textContent = data.reply || '';
+        resultEl.appendChild(replyDiv);
+
+        if (data.new_reply_url) {
+          var link = document.createElement('a');
+          link.className = 'chain-link';
+          link.href = data.new_reply_url;
+          link.textContent = 'Reply again';
+          resultEl.appendChild(link);
+        }
+      } else if (data.retryable) {
+        errorEl.textContent = 'Error: ' + (data.error || 'Unknown error') + '. You can retry.';
+        btn.disabled = false;
+        btn.textContent = 'Retry';
+        btn.className = 'btn btn-retry';
+      } else {
+        var reason = data.reason || data.error || 'This link is no longer valid.';
+        errorEl.textContent = reasonMap[reason] || reason;
+        btn.disabled = true;
+        btn.textContent = 'Send';
+      }
+    })
+    .catch(function() {
+      errorEl.textContent = 'Network error. Please try again.';
+      btn.disabled = false;
+      btn.textContent = 'Retry';
+    });
+  });
+})();
+</script>
+</body>
+</html>

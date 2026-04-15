@@ -101,7 +101,7 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
     from core.dashboard import start_dashboard
 
     state_dir = "state"
-    port = 18300
+    port = 8704
     try:
         config = load_config(args.config)
         state_dir = config.settings.state_dir
@@ -145,7 +145,7 @@ def main() -> int:
 
     # dashboard
     p_dash = sub.add_parser("dashboard", help="Start dashboard (read-only)")
-    p_dash.add_argument("--port", type=int, help="Port (default: from config or 18300)")
+    p_dash.add_argument("--port", type=int, help="Port (default: from config or 8704)")
     p_dash.add_argument("--run-id", help="Show specific run (default: latest)")
 
     args = parser.parse_args()

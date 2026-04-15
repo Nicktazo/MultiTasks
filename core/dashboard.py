@@ -5,6 +5,8 @@ from __future__ import annotations
 import html
 import json
 import os
+import re
+import threading
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from http.server import ThreadingHTTPServer
@@ -26,7 +28,9 @@ from .dag import get_execution_order
 from .chat import (
     WorkspaceStore, build_task_list, build_run_summary,
     chat_reply, generate_tasks, _extract_log_result,
+    send_to_whatsapp,
 )
+from .reply_token import ReplyTokenStore
 
 _MAX_BODY = 1_048_576  # 1 MB
 
@@ -36,10 +40,12 @@ class _DashboardHandler(BaseHTTPRequestHandler):
 
     state_dir: str = "state"
     template_path: str = ""
+    reply_template_path: str = ""
     initial_run_id: str = ""
     config_path: str = "projects.yaml"
     runner = None  # PipelineRunner, injected via type()
     workspace_store: WorkspaceStore = None  # type: ignore
+    reply_token_store: ReplyTokenStore = None  # type: ignore
 
     def do_GET(self) -> None:
         try:
@@ -81,7 +87,11 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             ws_name = params.get("name", [None])[0]
             self._serve_workspace(ws_name)
         else:
-            self._send_json(404, {"error": f"Not found: {self.path}"})
+            m = re.match(r"^/reply/([A-Za-z0-9_-]+)$", path)
+            if m:
+                self._serve_reply_page(m.group(1))
+            else:
+                self._send_json(404, {"error": f"Not found: {self.path}"})
 
     def do_POST(self) -> None:
         try:
@@ -126,6 +136,11 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             "/api/config/tasks/toggle-done": (_mutate_toggle_done, lambda b: {"project": b.get("project", ""), "id": b.get("id", "")}),
             "/api/config/settings": (_mutate_settings, lambda b: {k: v for k, v in b.items()}),
         }
+
+        m = re.match(r"^/api/reply/([A-Za-z0-9_-]+)$", path)
+        if m:
+            self._handle_reply_submit(m.group(1), body)
+            return
 
         if path == "/api/validate":
             self._handle_validate()
@@ -266,9 +281,22 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                             workspace_store=self.workspace_store)
 
         if result["ok"]:
-            self.workspace_store.save_turn(
+            turn = self.workspace_store.save_turn(
                 name, message, result["reply"], result["tasks"]
             )
+            # WhatsApp push (only if public_base_url configured)
+            base_url = self._get_setting("public_base_url", "")
+            if base_url and turn:
+                token = self.reply_token_store.create(
+                    workspace=name,
+                    assistant_msg_id=turn["assistant_id"],
+                    assistant_reply=result["reply"],
+                )
+                reply_link = f"{base_url}/reply/{token}"
+                wa_text = f"[MT:{name}]\n\n{result['reply']}\n\nReply: {reply_link}"
+                threading.Thread(
+                    target=send_to_whatsapp, args=(wa_text,), daemon=True
+                ).start()
         self._send_json(200, result)
 
     def _handle_generate(self, body: dict) -> None:
@@ -284,6 +312,148 @@ class _DashboardHandler(BaseHTTPRequestHandler):
 
         result = generate_tasks(name, message, self.config_path)
         self._send_json(200, result)
+
+    # ---- Reply link endpoints ----
+
+    def _serve_reply_page(self, token: str) -> None:
+        """GET /reply/<token> — render the reply form page."""
+        result = self.reply_token_store.peek(token, self.workspace_store)
+        try:
+            with open(self.reply_template_path, "r", encoding="utf-8") as f:
+                tpl = f.read()
+        except FileNotFoundError:
+            self._send_json(500, {"error": "Reply template not found"})
+            return
+
+        if not result["ok"]:
+            reason = result["reason"]
+            messages = {
+                "not_found": ("Not Found", "This reply link does not exist."),
+                "already_used": ("Already Used", "This reply link has already been used."),
+                "expired": ("Expired", "This reply link has expired (15 min)."),
+                "conversation_moved": ("Conversation Moved",
+                                       "The conversation has moved on. Check WhatsApp for the latest link."),
+                "processing": ("Processing", "A reply is being processed. Please wait and refresh."),
+            }
+            title, msg = messages.get(reason, ("Error", reason))
+            content = (
+                f'<div class="status-page">'
+                f'<h2>{html.escape(title)}</h2>'
+                f'<p>{html.escape(msg)}</p></div>'
+            )
+            page = tpl.replace("{{WORKSPACE}}", "Reply").replace("{{CONTENT}}", content)
+            status = 404 if reason == "not_found" else 410
+            self._send_html(status, page, cache_control="no-store")
+            return
+
+        entry = result["entry"]
+        ws_name = html.escape(entry["workspace"])
+        reply_text = html.escape(entry["assistant_reply"])
+        content = (
+            f'<div class="header">[MT:{ws_name}]</div>'
+            f'<div class="reply-box">{reply_text}</div>'
+            f'<form id="reply-form" data-token="{html.escape(token)}">'
+            f'<div class="input-area">'
+            f'<textarea id="reply-input" placeholder="Type your reply..." '
+            f'autofocus required></textarea></div>'
+            f'<button type="submit" id="send-btn" class="btn btn-primary">Send</button>'
+            f'<div id="error-area" class="error-msg"></div>'
+            f'</form>'
+            f'<div id="result-area"></div>'
+        )
+        page = tpl.replace("{{WORKSPACE}}", ws_name).replace("{{CONTENT}}", content)
+        self._send_html(200, page, cache_control="no-store")
+
+    def _handle_reply_submit(self, token: str, body: dict) -> None:
+        """POST /api/reply/<token> — submit a reply via one-time link."""
+        message = body.get("message", "").strip()
+        if not message:
+            self._send_json(400, {"ok": False, "error": "message required"},
+                            cache_control="no-store")
+            return
+
+        store = self.reply_token_store
+        result = store.reserve(token, self.workspace_store)
+        if not result["ok"]:
+            status = 404 if result["reason"] == "not_found" else 410
+            self._send_json(status, {"ok": False, "reason": result["reason"]},
+                            cache_control="no-store")
+            return
+
+        entry = result["entry"]
+        workspace_name = entry["workspace"]
+        ws = self.workspace_store.get(workspace_name)
+        if not ws:
+            store.release(token)
+            self._send_json(404, {"ok": False, "error": "Workspace not found"},
+                            cache_control="no-store")
+            return
+
+        # Call Claude
+        task_list = build_task_list(self.config_path, workspace_name)
+        run_summary = build_run_summary(self.state_dir, workspace_name)
+        chat_result = chat_reply(ws, message, task_list, run_summary,
+                                 workspace_store=self.workspace_store)
+
+        if not chat_result["ok"]:
+            store.release(token)  # failure → release, user can retry
+            self._send_json(200, {"ok": False, "error": chat_result["error"],
+                                  "retryable": True},
+                            cache_control="no-store")
+            return
+
+        # Success path — finalize only after save_turn succeeds
+        turn = self.workspace_store.save_turn(
+            workspace_name, message, chat_result["reply"], chat_result["tasks"]
+        )
+        if not turn:
+            store.release(token)
+            self._send_json(200, {"ok": False, "error": "Failed to save turn",
+                                  "retryable": True},
+                            cache_control="no-store")
+            return
+        store.finalize(token)
+
+        resp: dict = {"ok": True, "reply": chat_result["reply"]}
+
+        # Chain: generate new token + push WhatsApp
+        base_url = self._get_setting("public_base_url", "")
+        if base_url and turn:
+            new_token = store.create(
+                workspace=workspace_name,
+                assistant_msg_id=turn["assistant_id"],
+                assistant_reply=chat_result["reply"],
+            )
+            new_link = f"{base_url}/reply/{new_token}"
+            resp["new_reply_url"] = new_link
+            wa_text = (f"[MT:{workspace_name}]\n\n"
+                       f"{chat_result['reply']}\n\nReply: {new_link}")
+            threading.Thread(
+                target=send_to_whatsapp, args=(wa_text,), daemon=True
+            ).start()
+
+        self._send_json(200, resp, cache_control="no-store")
+
+    def _get_setting(self, key: str, default: str = "") -> str:
+        """Read a single setting value from the YAML config."""
+        try:
+            with open(self.config_path, "r", encoding="utf-8") as f:
+                raw = yaml.safe_load(f) or {}
+        except (FileNotFoundError, yaml.YAMLError):
+            return default
+        return str((raw.get("settings") or {}).get(key, default))
+
+    def _send_html(self, code: int, content: str,
+                   cache_control: str | None = None) -> None:
+        """Send an HTML response."""
+        encoded = content.encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(encoded)))
+        if cache_control:
+            self.send_header("Cache-Control", cache_control)
+        self.end_headers()
+        self.wfile.write(encoded)
 
     def _serve_config(self) -> None:
         try:
@@ -301,6 +471,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                     "state_dir": defaults.state_dir,
                     "log_dir": defaults.log_dir,
                     "dirty_workspace": defaults.dirty_workspace,
+                    "public_base_url": defaults.public_base_url,
+                    "listen_address": defaults.listen_address,
                 },
             }
         except yaml.YAMLError as e:
@@ -545,11 +717,14 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         except OSError:
             return (filename, 0.0)
 
-    def _send_json(self, code: int, data: object) -> None:
+    def _send_json(self, code: int, data: object,
+                   cache_control: str | None = None) -> None:
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        if cache_control:
+            self.send_header("Cache-Control", cache_control)
         self.end_headers()
         self.wfile.write(body)
 
@@ -569,10 +744,14 @@ def start_dashboard(port: int, state_dir: str = "state",
 
     template_dir = os.path.join(os.path.dirname(__file__), os.pardir, "templates")
     template_path = os.path.normpath(os.path.join(template_dir, "dashboard.html"))
+    reply_template_path = os.path.normpath(os.path.join(template_dir, "reply.html"))
 
     runner = PipelineRunner()
     workspace_store = WorkspaceStore(
         os.path.join(os.path.dirname(config_path) or ".", "workspaces")
+    )
+    reply_token_store = ReplyTokenStore(
+        path=os.path.join(state_dir, "reply_tokens.json")
     )
 
     _MAX_SYSTEM_MSG = 3000
@@ -650,17 +829,27 @@ def start_dashboard(port: int, state_dir: str = "state",
         "_Handler",
         (_DashboardHandler,),
         {"state_dir": state_dir, "template_path": template_path,
+         "reply_template_path": reply_template_path,
          "initial_run_id": run_id or "", "config_path": config_path,
-         "runner": runner, "workspace_store": workspace_store},
+         "runner": runner, "workspace_store": workspace_store,
+         "reply_token_store": reply_token_store},
     )
 
+    # Read listen_address from config (default 127.0.0.1)
+    listen_address = "127.0.0.1"
     try:
-        server = ThreadingHTTPServer(("127.0.0.1", port), handler)
+        cfg = load_config(config_path)
+        listen_address = cfg.settings.listen_address
+    except ConfigError:
+        pass
+
+    try:
+        server = ThreadingHTTPServer((listen_address, port), handler)
     except OSError as e:
-        print(f"Error: cannot start dashboard on port {port}: {e}", file=sys.stderr)
+        print(f"Error: cannot start dashboard on {listen_address}:{port}: {e}", file=sys.stderr)
         return False
 
-    print(f"Dashboard running at http://127.0.0.1:{port}")
+    print(f"Dashboard running at http://{listen_address}:{port}")
     print("Press Ctrl+C to stop.")
     try:
         server.serve_forever()
