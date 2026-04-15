@@ -528,46 +528,44 @@ def generate_tasks(project_name: str, user_message: str,
     Uses a portable temp directory as cwd to avoid touching the workspace.
     """
     user_message = user_message[:_MAX_USER_MESSAGE]
+    # CLI argument parser treats leading dashes as options; prepend space to avoid.
+    safe_message = " " + user_message if user_message.lstrip().startswith("-") else user_message
     task_list = build_task_list(config_path, project_name)
 
     system_prompt = (
-        f"## Task Generator (project: {project_name})\n"
-        "You are a task planning assistant. You MUST output [TASK]...[/TASK] blocks.\n"
-        "Do NOT output anything else — no prose, no markdown, no explanation.\n\n"
-        "## Format\n"
-        "Each task must be wrapped in [TASK] and [/TASK] tags exactly like this:\n\n"
+        "You are a task generator. You MUST output [TASK]...[/TASK] blocks ONLY. "
+        "No questions, no prose, no explanation.\n\n"
+        "Example:\n"
         "[TASK]\n"
-        "id: implement-feature\n"
+        "id: update-api-docs\n"
         "tool: claude\n"
-        "prompt: Implement the login form with email and password fields\n"
+        "prompt: Update the API documentation to reflect current endpoints\n"
         "[/TASK]\n\n"
         "[TASK]\n"
-        "id: review-feature\n"
+        "id: review-api-docs\n"
         "tool: codex-review\n"
-        "prompt: Review the login form implementation\n"
-        "depends_on: implement-feature\n"
-        "review_of: implement-feature\n"
+        "prompt: Review the API documentation update\n"
+        "depends_on: update-api-docs\n"
+        "review_of: update-api-docs\n"
         "[/TASK]\n\n"
-        "## Fields\n"
-        "- id: kebab-case identifier (required)\n"
-        "- tool: claude | codex | codex-review (required)\n"
-        "- prompt: detailed instruction (required)\n"
-        "- depends_on: comma-separated prerequisite task IDs (optional)\n"
-        "- review_of: task ID to review (required for codex-review)\n\n"
-        "CRITICAL: Your entire response must consist of [TASK]...[/TASK] blocks only."
+        "Fields: id (required, kebab-case), tool: claude|codex|codex-review (required), "
+        "prompt (required), depends_on (optional, comma-separated), "
+        "review_of (optional, codex-review only).\n\n"
+        f"Project: {project_name}\n"
+        "CRITICAL: Output ONLY [TASK]...[/TASK] blocks. Never ask questions."
     )
     if task_list:
         system_prompt += (
-            "\n\n## Existing Tasks (advisory — avoid duplicate IDs)\n"
+            "\n\nExisting tasks (avoid duplicate IDs):\n"
             + task_list[:_MAX_APPEND_SECTION]
         )
 
     cmd = [
-        "claude", "-p", user_message,
+        "claude", "-p", safe_message,
         "--output-format", "json",
         "--model", "sonnet",
         "--no-session-persistence",
-        "--append-system-prompt", system_prompt,
+        "--system-prompt", system_prompt,
     ]
 
     env = os.environ.copy()
