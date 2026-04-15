@@ -410,6 +410,8 @@ def chat_reply(workspace: dict, user_message: str,
             workspace_store.update_session_id(ws_name, session_id)
 
     user_message = user_message[:_MAX_USER_MESSAGE]
+    # CLI argument parser treats leading dashes as options; prepend space to avoid.
+    safe_message = " " + user_message if user_message.lstrip().startswith("-") else user_message
 
     # Build --append-system-prompt: role instruction + ephemeral context.
     # No --system-prompt so Claude CLI preserves its defaults (CLAUDE.md, etc.).
@@ -440,7 +442,7 @@ def chat_reply(workspace: dict, user_message: str,
         append_parts.append("## Latest Run Results\n" + run_summary[:_MAX_APPEND_SECTION])
     append_prompt = "\n\n".join(append_parts)
 
-    cmd = ["claude", "-p", user_message, "--output-format", "json"]
+    cmd = ["claude", "-p", safe_message, "--output-format", "json"]
 
     if _session_exists(session_id):
         cmd += ["--resume", session_id]
